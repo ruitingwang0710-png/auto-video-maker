@@ -24,7 +24,9 @@ from auto_video_maker.services.project_manager import (
     ProjectManager,
     ProjectManagerError,
 )
+from auto_video_maker.services.scene_service import SceneService
 from auto_video_maker.ui.new_project_dialog import NewProjectDialog
+from auto_video_maker.ui.scene_page import ScenePage
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +34,15 @@ APP_NAME = "Auto Video Maker"
 
 
 class MainWindow(QMainWindow):
-    """首页：应用名称、新建项目、打开项目、最近项目、设置。"""
+    """首页：应用名称、新建项目、打开项目、最近项目、设置。
 
-    def __init__(self, project_manager: ProjectManager | None = None) -> None:
+    依赖由 app.py（composition root）注入。
+    """
+
+    def __init__(self, project_manager: ProjectManager, scene_service: SceneService) -> None:
         super().__init__()
-        self._project_manager = project_manager or ProjectManager()
+        self._project_manager = project_manager
+        self._scene_service = scene_service
 
         self.setWindowTitle(APP_NAME)
         self.setMinimumSize(520, 480)
@@ -82,12 +88,7 @@ class MainWindow(QMainWindow):
         if dialog.exec() and dialog.created_project is not None:
             project = dialog.created_project
             self._add_recent(project)
-            project_dir = self._project_manager.project_directory(project)
-            QMessageBox.information(
-                self,
-                "项目已创建",
-                f"项目「{project.project_name}」已创建并保存到：\n{project_dir}",
-            )
+            self._open_scene_page(project)
 
     def _on_open_project(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
@@ -104,13 +105,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "无法打开项目", str(exc))
             return
         self._add_recent(project)
-        QMessageBox.information(
-            self,
-            "项目已打开",
-            f"项目「{project.project_name}」已打开。\n"
-            f"场景数：{len(project.scenes)}\n"
-            f"视频比例：{project.settings.aspect_ratio}",
-        )
+        self._open_scene_page(project)
+
+    def _open_scene_page(self, project: Project) -> None:
+        """进入场景编辑页面（模态；关闭时由页面负责未保存保护）。"""
+        page = ScenePage(project, self._scene_service, parent=self)
+        page.exec()
 
     def _on_settings(self) -> None:
         QMessageBox.information(self, "设置", "设置功能将在后续版本中提供。")
