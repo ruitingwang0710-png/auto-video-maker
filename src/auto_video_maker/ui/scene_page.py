@@ -47,6 +47,8 @@ from auto_video_maker.services.subtitle_service import (
     SubtitleService,
     SubtitleServiceError,
 )
+from auto_video_maker.services.video_render_service import VideoRenderService
+from auto_video_maker.ui.export_dialog import ExportDialog
 from auto_video_maker.ui.image_search_dialog import ImageSearchDialog
 from auto_video_maker.ui.scene_preview_dialog import PreviewChoice, ScenePreviewDialog
 
@@ -78,9 +80,11 @@ class ScenePage(QDialog):
         project_root: Path | None = None,
         audio_service: AudioService | None = None,
         subtitle_service: SubtitleService | None = None,
+        render_service: VideoRenderService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self._render_service = render_service
         self._project = project
         self._scene_service = scene_service
         self._smart_split_service = smart_split_service
@@ -170,10 +174,14 @@ class ScenePage(QDialog):
         self.gen_subtitle_button.clicked.connect(self._on_generate_subtitles)
         self.subtitle_status_label = QLabel("字幕：未生成", self)
 
+        self.export_button = QPushButton("导出视频", self)
+        self.export_button.clicked.connect(self._on_export_video)
+
         audio_buttons = QHBoxLayout()
         audio_buttons.addWidget(self.gen_audio_button)
         audio_buttons.addWidget(self.gen_all_audio_button)
         audio_buttons.addWidget(self.gen_subtitle_button)
+        audio_buttons.addWidget(self.export_button)
         audio_buttons.addStretch(1)
 
         right_layout = QVBoxLayout()
@@ -549,6 +557,19 @@ class ScenePage(QDialog):
         self.gen_subtitle_button.setToolTip(
             "" if can_subtitle else "请先为所有场景生成语音。"
         )
+        # 导出按钮：注入齐备即可点击（点击时做完整校验并给出明细）
+        export_ready = (
+            self._render_service is not None
+            and self._task_runner is not None
+            and self._project_root is not None
+            and bool(self._project.scenes)
+        )
+        self.export_button.setEnabled(export_ready)
+        video_path = self._project.output.get("video_path")
+        if video_path:
+            self.subtitle_status_label.setText(
+                self.subtitle_status_label.text() + f"    视频：已导出（{video_path}）"
+            )
 
     def _tts_privacy_gate(self) -> bool:
         assert self._audio_service is not None
@@ -689,6 +710,33 @@ class ScenePage(QDialog):
             self._project, relative_path
         )
         self._scene_service.save(self._project)
+
+    # ------------------------------------------------------------ 导出
+
+    def _on_export_video(self) -> None:
+        if (
+            self._render_service is None
+            or self._task_runner is None
+            or self._project_root is None
+        ):
+            return
+        issues = self._render_service.validate_export(self._project)
+        if issues:
+            QMessageBox.warning(
+                self, "无法导出", "请先解决以下问题：\n" + "\n".join(issues)
+            )
+            return
+        # 导出会保存项目（写入引用后），先确保没有空白场景阻塞保存
+        dialog = ExportDialog(
+            self._project,
+            self._project_root,
+            self._render_service,
+            self._task_runner,
+            parent=self,
+        )
+        dialog.start()
+        dialog.exec()
+        self._refresh_audio_status(self.scene_list.currentRow())
 
     # ------------------------------------------------------------ 关闭保护
 

@@ -105,3 +105,58 @@ def test_task_ids_unique(qapp: QCoreApplication, runner: TaskRunner) -> None:
     ids = [runner.run(lambda: None, done.append, done.append) for _ in range(5)]
     assert len(set(ids)) == 5
     assert wait_until(qapp, lambda: len(done) == 5)
+
+
+# ------------------------------------------------------------ Phase 5：进度通道
+
+
+def test_progress_delivered_monotonic_and_clamped(
+    qapp: QCoreApplication, runner: TaskRunner
+) -> None:
+    """进度 0–100、单调不减、重复与回退值被节流。"""
+    received: list[int] = []
+    done: list = []
+
+    def work(report) -> str:
+        for value in (0, 10, 10, 5, 250, 100):  # 含重复/回退/越界
+            report(value)
+        return "ok"
+
+    runner.run(work, done.append, done.append, on_progress=received.append)
+    assert wait_until(qapp, lambda: done)
+    assert received == [0, 10, 100]  # 单调、去重、钳制到 100
+
+
+def test_progress_not_dispatched_after_completion(
+    qapp: QCoreApplication, runner: TaskRunner
+) -> None:
+    """任务终态后不得继续派发进度。"""
+    import threading
+
+    release = threading.Event()
+    received: list[int] = []
+    done: list = []
+
+    def work(report) -> str:
+        report(30)
+        release.wait(timeout=5)
+        report(90)  # 完成回调之后到达的进度
+        return "ok"
+
+    task_id = runner.run(work, done.append, done.append, on_progress=received.append)
+    assert wait_until(qapp, lambda: received == [30])
+    runner.cancel(task_id)  # 取消 → 终态
+    release.set()
+    wait_until(qapp, lambda: done, timeout=0.5)
+    assert done == []  # 晚到结果被丢弃（既有语义）
+    assert received == [30]  # 取消后无进度继续派发
+
+
+def test_progress_optional_keeps_legacy_api(
+    qapp: QCoreApplication, runner: TaskRunner
+) -> None:
+    """未提供 on_progress 时 fn 以零参调用（既有 API 兼容）。"""
+    done: list = []
+    runner.run(lambda: 42, done.append, done.append)
+    assert wait_until(qapp, lambda: done)
+    assert done == [42]

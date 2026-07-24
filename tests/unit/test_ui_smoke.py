@@ -141,6 +141,8 @@ def test_scene_page_without_smart_services(
     assert not page.gen_subtitle_button.isEnabled()
     assert page.audio_status_label.text() == "配音：未生成"
     assert page.subtitle_status_label.text() == "字幕：未生成"
+    # 未注入渲染服务时导出按钮安全禁用
+    assert not page.export_button.isEnabled()
     page.close()
 
 

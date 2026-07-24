@@ -69,7 +69,8 @@ class SceneService:
         if not texts:
             raise SceneServiceError("文案中没有可拆分的内容。")
         project.scenes = self.build_scenes(texts)
-        self._project_manager.clear_subtitle_path(project)  # 场景集合变化
+        self._project_manager.clear_subtitle_path(project)
+        self._project_manager.clear_video_path(project)  # 场景集合变化
         self._dirty = True
         logger.info("文案拆分完成：%d 个场景", len(project.scenes))
         return project.scenes
@@ -95,7 +96,8 @@ class SceneService:
             )
         scenes = self.build_scenes(texts)  # 先完整构建
         project.scenes = scenes  # 再一次性替换
-        self._project_manager.clear_subtitle_path(project)  # 场景集合变化
+        self._project_manager.clear_subtitle_path(project)
+        self._project_manager.clear_video_path(project)  # 场景集合变化
         self._dirty = True
         logger.info("已应用拆分结果：%d 个场景", len(scenes))
         return scenes
@@ -129,6 +131,7 @@ class SceneService:
             scene.audio_path = None
             scene.duration = None
             self._project_manager.clear_subtitle_path(project)
+            self._project_manager.clear_video_path(project)
             self._dirty = True
 
     def add_scene(self, project: Project, text: str = "") -> Scene:
@@ -137,6 +140,7 @@ class SceneService:
         project.scenes.append(scene)
         self.renumber(project)
         self._project_manager.clear_subtitle_path(project)
+        self._project_manager.clear_video_path(project)
         self._dirty = True
         return scene
 
@@ -146,6 +150,7 @@ class SceneService:
         del project.scenes[index]
         self.renumber(project)
         self._project_manager.clear_subtitle_path(project)
+        self._project_manager.clear_video_path(project)
         self._dirty = True
 
     def move_scene_up(self, project: Project, index: int) -> int:
@@ -157,6 +162,7 @@ class SceneService:
         scenes[index - 1], scenes[index] = scenes[index], scenes[index - 1]
         self.renumber(project)
         self._project_manager.clear_subtitle_path(project)
+        self._project_manager.clear_video_path(project)
         self._dirty = True
         return index - 1
 
@@ -169,6 +175,7 @@ class SceneService:
         scenes[index], scenes[index + 1] = scenes[index + 1], scenes[index]
         self.renumber(project)
         self._project_manager.clear_subtitle_path(project)
+        self._project_manager.clear_video_path(project)
         self._dirty = True
         return index + 1
 
@@ -206,6 +213,8 @@ class SceneService:
         except AssetValidationError as exc:
             raise SceneServiceError(str(exc)) from exc
         scene.selected_asset = asset.to_dict()
+        # 失效矩阵：更换图片只清 video_path，不清 subtitle_path
+        self._project_manager.clear_video_path(project)
         self._dirty = True
         logger.info("场景 %d 已设置素材：%s", scene.scene_id, asset.local_path)
 
@@ -235,6 +244,7 @@ class SceneService:
         scene.audio_path = audio_path
         scene.duration = float(duration)
         self._project_manager.clear_subtitle_path(project)
+        self._project_manager.clear_video_path(project)
         self._dirty = True
         logger.info("场景 %d 配音已写入（时长 %.2f 秒）", scene.scene_id, duration)
 

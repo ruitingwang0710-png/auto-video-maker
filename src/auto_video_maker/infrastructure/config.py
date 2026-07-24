@@ -74,6 +74,8 @@ class LLMSettings:
     tts_privacy_confirmed: bool = False
     tts_privacy_provider: str = ""
     tts_privacy_notice_version: int = 0
+    ffmpeg_path: str = ""
+    ffprobe_path: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,6 +88,8 @@ class LLMSettings:
             "tts_privacy_confirmed": self.tts_privacy_confirmed,
             "tts_privacy_provider": self.tts_privacy_provider,
             "tts_privacy_notice_version": self.tts_privacy_notice_version,
+            "ffmpeg_path": self.ffmpeg_path,
+            "ffprobe_path": self.ffprobe_path,
         }
 
     @classmethod
@@ -121,6 +125,8 @@ class LLMSettings:
             tts_privacy_confirmed=_bool("tts_privacy_confirmed"),
             tts_privacy_provider=_str("tts_privacy_provider"),
             tts_privacy_notice_version=_int("tts_privacy_notice_version", 0),
+            ffmpeg_path=_str("ffmpeg_path"),
+            ffprobe_path=_str("ffprobe_path"),
         )
 
 
