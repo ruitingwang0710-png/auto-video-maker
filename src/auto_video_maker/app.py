@@ -13,29 +13,76 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
+from auto_video_maker.infrastructure.config import ConfigStore, LLMSettings
 from auto_video_maker.infrastructure.logging_config import setup_logging
+from auto_video_maker.infrastructure.secret_store import (
+    InMemorySecretStore,
+    MacOSKeychainSecretStore,
+    SecretStore,
+)
+from auto_video_maker.infrastructure.task_runner import TaskRunner
+from auto_video_maker.providers.llm_client import OpenAICompatibleClient
+from auto_video_maker.providers.llm_scene_splitter import LLMSceneSplitter
 from auto_video_maker.services.project_manager import ProjectManager
 from auto_video_maker.services.scene_service import SceneService
-from auto_video_maker.services.scene_splitter import RuleBasedSceneSplitter
+from auto_video_maker.services.scene_splitter import RuleBasedSceneSplitter, SceneSplitter
+from auto_video_maker.services.smart_split_service import SmartSplitService
 from auto_video_maker.ui.main_window import APP_NAME, MainWindow
 
 logger = logging.getLogger(__name__)
 
 
+def _create_secret_store() -> SecretStore:
+    """按平台选择密钥存储。
+
+    macOS 使用钥匙串；其他平台（仅开发环境）使用内存实现，不做持久化。
+    """
+    if sys.platform == "darwin":
+        return MacOSKeychainSecretStore()
+    logger.warning("非 macOS 平台：API Key 使用内存存储，应用退出后失效（仅供开发）")
+    return InMemorySecretStore()
+
+
 def main() -> int:
     """启动桌面应用，返回退出码。
 
-    本函数是唯一的 composition root：
-    RuleBasedSceneSplitter → SceneService → MainWindow / ScenePage。
+    本函数是唯一的 composition root：所有服务与拆分器在此创建并注入。
     """
     setup_logging()
     logger.info("应用启动: %s", APP_NAME)
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+
     project_manager = ProjectManager()
-    splitter = RuleBasedSceneSplitter()
-    scene_service = SceneService(splitter, project_manager)
-    window = MainWindow(project_manager, scene_service)
+    rule_splitter = RuleBasedSceneSplitter()
+    scene_service = SceneService(rule_splitter, project_manager)
+
+    config_store = ConfigStore()
+    secret_store = _create_secret_store()
+
+    def llm_splitter_factory(settings: LLMSettings) -> SceneSplitter:
+        client = OpenAICompatibleClient(
+            base_url=settings.base_url,
+            model=settings.model,
+            secret_store=secret_store,
+            timeout_seconds=settings.timeout_seconds,
+            max_retries=settings.max_retries,
+        )
+        return LLMSceneSplitter(client)
+
+    smart_split_service = SmartSplitService(
+        config_store, secret_store, rule_splitter, llm_splitter_factory
+    )
+    task_runner = TaskRunner()
+
+    window = MainWindow(
+        project_manager,
+        scene_service,
+        smart_split_service=smart_split_service,
+        config_store=config_store,
+        secret_store=secret_store,
+        task_runner=task_runner,
+    )
     window.show()
     exit_code = app.exec()
     logger.info("应用退出，退出码 %s", exit_code)

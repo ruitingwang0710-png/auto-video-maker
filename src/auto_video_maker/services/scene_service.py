@@ -66,6 +66,31 @@ class SceneService:
         logger.info("文案拆分完成：%d 个场景", len(project.scenes))
         return project.scenes
 
+    def replace_from_texts(
+        self, project: Project, texts: list[str], *, overwrite: bool = False
+    ) -> list[Scene]:
+        """将已确认的场景文字列表应用为项目场景（唯一写入口）。
+
+        防御性验证：即使上游已校验，此处仍完整验证；
+        验证失败时 Project、scenes、dirty 状态均不变化。
+        先完整验证并构建全部 Scene，再一次性替换。
+        """
+        if not isinstance(texts, list) or not texts:
+            raise SceneServiceError("拆分结果为空，无法应用。")
+        for item in texts:
+            if not isinstance(item, str) or not item.strip():
+                raise SceneServiceError("拆分结果包含空白或非文本场景，已拒绝应用。")
+        if project.scenes and not overwrite:
+            raise ScenesExistError(
+                f"项目已有 {len(project.scenes)} 个场景。"
+                "应用新的拆分结果将覆盖现有场景，请确认后再操作。"
+            )
+        scenes = self.build_scenes(texts)  # 先完整构建
+        project.scenes = scenes  # 再一次性替换
+        self._dirty = True
+        logger.info("已应用拆分结果：%d 个场景", len(scenes))
+        return scenes
+
     def build_scenes(self, texts: list[str]) -> list[Scene]:
         """将场景文字列表统一转换为 Scene 列表（默认字段见 TASK.md）。"""
         return [

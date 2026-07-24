@@ -18,6 +18,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from auto_video_maker.infrastructure.config import ConfigStore
+from auto_video_maker.infrastructure.secret_store import SecretStore
+from auto_video_maker.infrastructure.task_runner import TaskRunner
 from auto_video_maker.models.project import Project
 from auto_video_maker.services.project_manager import (
     PROJECT_FILE_NAME,
@@ -25,8 +28,10 @@ from auto_video_maker.services.project_manager import (
     ProjectManagerError,
 )
 from auto_video_maker.services.scene_service import SceneService
+from auto_video_maker.services.smart_split_service import SmartSplitService
 from auto_video_maker.ui.new_project_dialog import NewProjectDialog
 from auto_video_maker.ui.scene_page import ScenePage
+from auto_video_maker.ui.settings_dialog import SettingsDialog
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +44,22 @@ class MainWindow(QMainWindow):
     依赖由 app.py（composition root）注入。
     """
 
-    def __init__(self, project_manager: ProjectManager, scene_service: SceneService) -> None:
+    def __init__(
+        self,
+        project_manager: ProjectManager,
+        scene_service: SceneService,
+        smart_split_service: SmartSplitService | None = None,
+        config_store: ConfigStore | None = None,
+        secret_store: SecretStore | None = None,
+        task_runner: TaskRunner | None = None,
+    ) -> None:
         super().__init__()
         self._project_manager = project_manager
         self._scene_service = scene_service
+        self._smart_split_service = smart_split_service
+        self._config_store = config_store
+        self._secret_store = secret_store
+        self._task_runner = task_runner
 
         self.setWindowTitle(APP_NAME)
         self.setMinimumSize(520, 480)
@@ -109,11 +126,21 @@ class MainWindow(QMainWindow):
 
     def _open_scene_page(self, project: Project) -> None:
         """进入场景编辑页面（模态；关闭时由页面负责未保存保护）。"""
-        page = ScenePage(project, self._scene_service, parent=self)
+        page = ScenePage(
+            project,
+            self._scene_service,
+            smart_split_service=self._smart_split_service,
+            task_runner=self._task_runner,
+            parent=self,
+        )
         page.exec()
 
     def _on_settings(self) -> None:
-        QMessageBox.information(self, "设置", "设置功能将在后续版本中提供。")
+        if self._config_store is None or self._secret_store is None:
+            QMessageBox.information(self, "设置", "设置功能当前不可用。")
+            return
+        dialog = SettingsDialog(self._config_store, self._secret_store, parent=self)
+        dialog.exec()
 
     # ------------------------------------------------------------------ 辅助
 
