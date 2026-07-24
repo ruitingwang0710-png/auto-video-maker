@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QDialog,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -21,8 +22,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pathlib import Path
+
 from auto_video_maker.infrastructure.task_runner import TaskRunner
 from auto_video_maker.models.project import Project
+from auto_video_maker.providers.image_provider import ImageProvider
+from auto_video_maker.services.asset_download_service import (
+    AssetDownloadError,
+    AssetDownloadService,
+)
+from auto_video_maker.services.keyword_service import KeywordService
 from auto_video_maker.services.scene_service import (
     SceneService,
     SceneServiceError,
@@ -32,6 +41,7 @@ from auto_video_maker.services.smart_split_service import (
     SmartSplitError,
     SmartSplitService,
 )
+from auto_video_maker.ui.image_search_dialog import ImageSearchDialog
 from auto_video_maker.ui.scene_preview_dialog import PreviewChoice, ScenePreviewDialog
 
 _PREVIEW_LENGTH = 24
@@ -51,6 +61,10 @@ class ScenePage(QDialog):
         scene_service: SceneService,
         smart_split_service: SmartSplitService | None = None,
         task_runner: TaskRunner | None = None,
+        image_provider: ImageProvider | None = None,
+        download_service: AssetDownloadService | None = None,
+        keyword_service: KeywordService | None = None,
+        project_root: Path | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -58,6 +72,10 @@ class ScenePage(QDialog):
         self._scene_service = scene_service
         self._smart_split_service = smart_split_service
         self._task_runner = task_runner
+        self._image_provider = image_provider
+        self._download_service = download_service
+        self._keyword_service = keyword_service
+        self._project_root = project_root
         self._smart_task_id: int | None = None
         self._progress: QProgressDialog | None = None
 
@@ -110,10 +128,26 @@ class ScenePage(QDialog):
         editor_buttons.addStretch(1)
         editor_buttons.addWidget(self.save_button)
 
+        # 配图区域
+        self.asset_status_label = QLabel("未配图", self)
+        self.asset_status_label.setWordWrap(True)
+        self.search_image_button = QPushButton("搜索图片", self)
+        self.search_image_button.clicked.connect(self._on_search_image)
+        self.local_image_button = QPushButton("使用本地图片", self)
+        self.local_image_button.clicked.connect(self._on_local_image)
+
+        asset_buttons = QHBoxLayout()
+        asset_buttons.addWidget(self.search_image_button)
+        asset_buttons.addWidget(self.local_image_button)
+        asset_buttons.addStretch(1)
+
         right_layout = QVBoxLayout()
         right_layout.addWidget(QLabel("场景文字", self))
         right_layout.addWidget(self.editor)
         right_layout.addLayout(editor_buttons)
+        right_layout.addWidget(QLabel("场景配图", self))
+        right_layout.addWidget(self.asset_status_label)
+        right_layout.addLayout(asset_buttons)
 
         layout = QHBoxLayout(self)
         layout.addLayout(left_layout, 3)
@@ -333,6 +367,110 @@ class ScenePage(QDialog):
             return False
         return True
 
+    # ------------------------------------------------------------ 配图
+
+    def _image_features_ready(self) -> bool:
+        return all(
+            component is not None
+            for component in (
+                self._image_provider,
+                self._download_service,
+                self._keyword_service,
+                self._task_runner,
+                self._project_root,
+            )
+        )
+
+    def _on_search_image(self) -> None:
+        row = self.scene_list.currentRow()
+        if row < 0 or not self._image_features_ready():
+            return
+        scene = self._project.scenes[row]
+
+        def privacy_gate() -> bool:
+            if self._smart_split_service is None:
+                return False
+            if not self._smart_split_service.needs_privacy_confirmation():
+                return True
+            answer = QMessageBox.question(
+                self,
+                "发送文案确认",
+                PRIVACY_NOTICE,
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Ok:
+                return False
+            self._smart_split_service.record_privacy_confirmation()
+            return True
+
+        dialog = ImageSearchDialog(
+            scene_text=scene.text,
+            initial_keywords=list(scene.search_keywords),
+            project_root=self._project_root,
+            image_provider=self._image_provider,
+            download_service=self._download_service,
+            keyword_service=self._keyword_service,
+            task_runner=self._task_runner,
+            privacy_gate=privacy_gate,
+            parent=self,
+        )
+        dialog.exec()
+        try:
+            if dialog.edited_keywords and dialog.edited_keywords != scene.search_keywords:
+                self._scene_service.set_scene_keywords(
+                    self._project, row, dialog.edited_keywords
+                )
+            if dialog.selected_asset is not None:
+                self._scene_service.set_scene_asset(
+                    self._project, row, dialog.selected_asset
+                )
+        except SceneServiceError as exc:
+            QMessageBox.warning(self, "无法保存配图", str(exc))
+        self._refresh_asset_status(row)
+
+    def _on_local_image(self) -> None:
+        row = self.scene_list.currentRow()
+        if row < 0 or self._download_service is None or self._project_root is None:
+            return
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择本地图片", "", "图片文件 (*.jpg *.jpeg *.png *.webp)"
+        )
+        if not file_path:
+            return
+        try:
+            asset = self._download_service.import_local_file(
+                Path(file_path), self._project_root
+            )
+            self._scene_service.set_scene_asset(self._project, row, asset)
+        except (AssetDownloadError, SceneServiceError) as exc:
+            QMessageBox.warning(self, "无法使用本地图片", str(exc))
+            return
+        self._refresh_asset_status(row)
+
+    def _refresh_asset_status(self, row: int) -> None:
+        has_selection = 0 <= row < len(self._project.scenes)
+        features = self._image_features_ready()
+        self.search_image_button.setEnabled(has_selection and features)
+        self.local_image_button.setEnabled(
+            has_selection
+            and self._download_service is not None
+            and self._project_root is not None
+        )
+        if not has_selection:
+            self.asset_status_label.setText("未配图")
+            return
+        asset = self._project.scenes[row].selected_asset
+        if not asset:
+            self.asset_status_label.setText("未配图")
+        else:
+            author = asset.get("author") or "未知作者"
+            license_name = str(asset.get("license", "")).upper() or "未知许可"
+            self.asset_status_label.setText(
+                f"已配图：{asset.get('local_path', '')}\n"
+                f"作者：{author}    许可证：{license_name}"
+            )
+
     # ------------------------------------------------------------ 关闭保护
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (Qt 命名)
@@ -376,6 +514,7 @@ class ScenePage(QDialog):
         self.move_down_button.setEnabled(
             has_selection and row < len(self._project.scenes) - 1
         )
+        self._refresh_asset_status(row)
 
     def _refresh_list(self, select_row: int | None = None) -> None:
         self.scene_list.blockSignals(True)

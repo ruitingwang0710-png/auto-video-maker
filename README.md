@@ -11,7 +11,11 @@
 
 ## 当前状态
 
-Phase 2.5 已完成：LLM 智能分镜（Phase 1 项目系统、Phase 2 文案拆分与场景系统均已完成）。
+Phase 3 已完成：图片素材系统。
+
+- Phase 1（项目系统）、Phase 2（文案拆分与场景系统）：已完成并通过 macOS 本机验收
+- Phase 2.5（LLM 智能分镜）：implementation complete and automated tests
+  passed; live LLM provider integration test deferred
 
 已实现：
 
@@ -28,10 +32,14 @@ Phase 2.5 已完成：LLM 智能分镜（Phase 1 项目系统、Phase 2 文案�
   后台拆分（可取消）→ 预览确认 → 应用；模型只拆分不改写（不变量校验），
   失败可重试或改用规则拆分
 - API Key 存 macOS 钥匙串（按服务地址隔离），config.json 不含密钥
+- 图片素材系统：为场景生成/编辑搜索关键词（LLM 可选 + 规则兜底）→
+  Openverse 搜索开放许可图片（仅 CC0/PDM/BY）→ 查看候选（作者与许可证）→
+  下载（15MB 上限、实际格式校验、防 decompression bomb）或本地图片替换 →
+  版权元数据完整存入 project.json（相对路径，防路径逃逸）
 - 基础日志
 - 单元测试与集成测试
 
-尚未实现（后续阶段）：图片搜索与关键词、TTS、字幕、FFmpeg 视频生成、打包。
+尚未实现（后续阶段）：TTS、字幕、FFmpeg 视频生成、credits.txt 导出、打包。
 
 ## 智能分镜设置说明
 

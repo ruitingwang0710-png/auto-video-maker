@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 
 from auto_video_maker.models.project import Project, Scene
+from auto_video_maker.models.selected_asset import AssetValidationError, SelectedAsset
 from auto_video_maker.services.project_manager import ProjectManager, ProjectManagerError
 from auto_video_maker.services.scene_splitter import SceneSplitter
 from auto_video_maker.services.script_parser import clean_script
@@ -156,6 +157,38 @@ class SceneService:
         """scene_id 重新从 1 连续编号。"""
         for index, scene in enumerate(project.scenes, start=1):
             scene.scene_id = index
+
+    # ------------------------------------------------------------ 素材与关键词
+
+    def set_scene_keywords(self, project: Project, index: int, keywords: list[str]) -> None:
+        """更新场景搜索关键词（防御性验证；失败时项目状态不变）。"""
+        if not isinstance(keywords, list) or any(
+            not isinstance(item, str) or not item.strip() for item in keywords
+        ):
+            raise SceneServiceError("关键词必须是非空文本列表。")
+        scene = self._scene_at(project, index)
+        cleaned = [" ".join(item.split()) for item in keywords]
+        if scene.search_keywords != cleaned:
+            scene.search_keywords = cleaned
+            self._dirty = True
+
+    def set_scene_asset(self, project: Project, index: int, asset: SelectedAsset) -> None:
+        """写入场景选中素材（唯一写入口；防御性验证）。
+
+        - asset 必须是有效的 SelectedAsset
+        - local_path 解析后必须位于项目目录内（防路径逃逸）
+        - 验证失败时 Scene 与项目状态均不变化
+        """
+        if not isinstance(asset, SelectedAsset):
+            raise SceneServiceError("素材数据无效：必须经 SelectedAsset 构造。")
+        scene = self._scene_at(project, index)
+        try:
+            asset.resolve_within(self._project_manager.project_directory(project))
+        except AssetValidationError as exc:
+            raise SceneServiceError(str(exc)) from exc
+        scene.selected_asset = asset.to_dict()
+        self._dirty = True
+        logger.info("场景 %d 已设置素材：%s", scene.scene_id, asset.local_path)
 
     # ------------------------------------------------------------ 保存
 

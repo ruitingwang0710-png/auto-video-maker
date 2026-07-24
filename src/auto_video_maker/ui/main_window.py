@@ -22,6 +22,9 @@ from auto_video_maker.infrastructure.config import ConfigStore
 from auto_video_maker.infrastructure.secret_store import SecretStore
 from auto_video_maker.infrastructure.task_runner import TaskRunner
 from auto_video_maker.models.project import Project
+from auto_video_maker.providers.image_provider import ImageProvider
+from auto_video_maker.services.asset_download_service import AssetDownloadService
+from auto_video_maker.services.keyword_service import KeywordService
 from auto_video_maker.services.project_manager import (
     PROJECT_FILE_NAME,
     ProjectManager,
@@ -52,6 +55,9 @@ class MainWindow(QMainWindow):
         config_store: ConfigStore | None = None,
         secret_store: SecretStore | None = None,
         task_runner: TaskRunner | None = None,
+        image_provider: ImageProvider | None = None,
+        download_service: AssetDownloadService | None = None,
+        keyword_service: KeywordService | None = None,
     ) -> None:
         super().__init__()
         self._project_manager = project_manager
@@ -60,6 +66,9 @@ class MainWindow(QMainWindow):
         self._config_store = config_store
         self._secret_store = secret_store
         self._task_runner = task_runner
+        self._image_provider = image_provider
+        self._download_service = download_service
+        self._keyword_service = keyword_service
 
         self.setWindowTitle(APP_NAME)
         self.setMinimumSize(520, 480)
@@ -131,6 +140,10 @@ class MainWindow(QMainWindow):
             self._scene_service,
             smart_split_service=self._smart_split_service,
             task_runner=self._task_runner,
+            image_provider=self._image_provider,
+            download_service=self._download_service,
+            keyword_service=self._keyword_service,
+            project_root=self._project_manager.project_directory(project),
             parent=self,
         )
         page.exec()

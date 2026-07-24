@@ -21,8 +21,11 @@ from auto_video_maker.infrastructure.secret_store import (
     SecretStore,
 )
 from auto_video_maker.infrastructure.task_runner import TaskRunner
-from auto_video_maker.providers.llm_client import OpenAICompatibleClient
+from auto_video_maker.providers.image_provider import OpenverseImageProvider
+from auto_video_maker.providers.llm_client import LLMClient, OpenAICompatibleClient
 from auto_video_maker.providers.llm_scene_splitter import LLMSceneSplitter
+from auto_video_maker.services.asset_download_service import AssetDownloadService
+from auto_video_maker.services.keyword_service import KeywordService
 from auto_video_maker.services.project_manager import ProjectManager
 from auto_video_maker.services.scene_service import SceneService
 from auto_video_maker.services.scene_splitter import RuleBasedSceneSplitter, SceneSplitter
@@ -60,20 +63,30 @@ def main() -> int:
     config_store = ConfigStore()
     secret_store = _create_secret_store()
 
-    def llm_splitter_factory(settings: LLMSettings) -> SceneSplitter:
-        client = OpenAICompatibleClient(
+    def llm_client_factory(settings: LLMSettings) -> LLMClient:
+        return OpenAICompatibleClient(
             base_url=settings.base_url,
             model=settings.model,
             secret_store=secret_store,
             timeout_seconds=settings.timeout_seconds,
             max_retries=settings.max_retries,
         )
-        return LLMSceneSplitter(client)
+
+    def llm_splitter_factory(settings: LLMSettings) -> SceneSplitter:
+        return LLMSceneSplitter(llm_client_factory(settings))
 
     smart_split_service = SmartSplitService(
         config_store, secret_store, rule_splitter, llm_splitter_factory
     )
     task_runner = TaskRunner()
+
+    image_provider = OpenverseImageProvider()
+    download_service = AssetDownloadService()
+    keyword_service = KeywordService(
+        config_store,
+        availability_check=smart_split_service.availability,
+        llm_client_factory=llm_client_factory,
+    )
 
     window = MainWindow(
         project_manager,
@@ -82,6 +95,9 @@ def main() -> int:
         config_store=config_store,
         secret_store=secret_store,
         task_runner=task_runner,
+        image_provider=image_provider,
+        download_service=download_service,
+        keyword_service=keyword_service,
     )
     window.show()
     exit_code = app.exec()

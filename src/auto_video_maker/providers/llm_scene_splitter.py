@@ -32,11 +32,32 @@ _PROMPT_TEMPLATE = """你是一个视频分镜助手。请把下面的中文文�
 1. 只能在原文中选择拆分点，绝对不能改写、删除、添加或调换任何文字。
 2. 所有场景按原文顺序拼接后必须与原文完全一致。
 3. 每个场景建议 {min_length} 到 {max_length} 个字（软目标，不得为满足长度改动文字）。
-4. 只输出一个 JSON 字符串数组，不要输出任何解释或其他内容。
+4. 只输出一个 JSON 对象，格式为 {{"scenes": ["场景一原文", "场景二原文"]}}。
+   scenes 数组的每一项必须是字符串，不要输出任何解释或其他内容。
 
 文案：
 {script}
 """
+
+# OpenAI 兼容 strict JSON Schema：统一返回 {"scenes": [...]}
+SCENE_SPLIT_RESPONSE_FORMAT: dict = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "scene_split_result",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "scenes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                }
+            },
+            "required": ["scenes"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 class LLMSplitError(Exception):
@@ -54,28 +75,74 @@ def build_prompt(
     )
 
 
-def parse_response(raw: str) -> list[str]:
-    """保守解析模型响应。
+def strip_code_fence(text: str) -> str:
+    """剥离 ```json 代码块包裹（无包裹则原样返回，均去首尾空白）。"""
+    stripped = text.strip()
+    match = _CODE_BLOCK_PATTERN.match(stripped)
+    return match.group("body").strip() if match else stripped
 
-    只接受两种形式：完整 JSON 数组，或 ```json 代码块中的 JSON 数组。
-    不从杂质文本中贪婪提取方括号内容。
+
+def _log_invalid_shape(data: object, items: object = None) -> None:
+    """记录结构诊断信息：只记类型，不记用户文案或模型响应内容。"""
+    item_types: str = "-"
+    if isinstance(items, list):
+        item_types = ",".join(sorted({type(item).__name__ for item in items})) or "-"
+    logger.warning(
+        "LLM 响应结构不符合要求：顶层类型=%s，scenes 项类型=%s",
+        type(data).__name__,
+        item_types,
+    )
+
+
+def parse_response(raw: str) -> list[str]:
+    """保守解析模型响应，返回场景文字列表。
+
+    接受的形式（含 ```json 代码块包裹）：
+    - 新协议：{"scenes": ["...", "..."]}
+    - 旧协议兼容：顶层 JSON 字符串数组
+    不从杂质文本中贪婪提取内容。
+
+    客户端验证（即使 strict schema 已生效仍执行）：
+    scenes 必须是 list，每项必须是 str 且去除空白后非空，至少一个场景。
+    不强制转换非法项、不跳过非法项。
     """
-    text = raw.strip()
-    match = _CODE_BLOCK_PATTERN.match(text)
-    if match:
-        text = match.group("body").strip()
+    text = strip_code_fence(raw)
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise LLMSplitError("模型返回的内容不是有效的 JSON 数组。") from exc
-    if not isinstance(data, list) or not data:
-        raise LLMSplitError("模型返回的 JSON 不是非空数组。")
-    result: list[str] = []
-    for item in data:
+        raise LLMSplitError(
+            "模型返回格式不符合要求（不是有效的 JSON）。"
+            "你可以重试，或改用规则拆分。"
+        ) from exc
+    if isinstance(data, dict):
+        if "scenes" not in data:
+            _log_invalid_shape(data)
+            raise LLMSplitError(
+                "模型返回格式不符合要求（缺少 scenes 字段）。"
+                "你可以重试，或改用规则拆分。"
+            )
+        scenes = data["scenes"]
+    elif isinstance(data, list):
+        scenes = data  # 旧协议兼容
+    else:
+        _log_invalid_shape(data)
+        raise LLMSplitError(
+            "模型返回格式不符合要求。你可以重试，或改用规则拆分。"
+        )
+    if not isinstance(scenes, list) or not scenes:
+        _log_invalid_shape(data, scenes if isinstance(scenes, list) else None)
+        raise LLMSplitError(
+            "模型返回格式不符合要求（scenes 必须是非空数组）。"
+            "你可以重试，或改用规则拆分。"
+        )
+    for item in scenes:
         if not isinstance(item, str) or not item.strip():
-            raise LLMSplitError("模型返回的数组包含非文本或空白项。")
-        result.append(item)
-    return result
+            _log_invalid_shape(data, scenes)
+            raise LLMSplitError(
+                "模型返回格式不符合要求（scenes 每项必须是非空文本）。"
+                "你可以重试，或改用规则拆分。"
+            )
+    return list(scenes)
 
 
 class LLMSceneSplitter(SceneSplitter):
@@ -95,7 +162,7 @@ class LLMSceneSplitter(SceneSplitter):
         if not cleaned_script.strip():
             return []
         prompt = build_prompt(cleaned_script, self._min_length, self._max_length)
-        raw = self._client.send(prompt)
+        raw = self._client.send(prompt, response_format=SCENE_SPLIT_RESPONSE_FORMAT)
         texts = parse_response(raw)
         if normalize_for_comparison("".join(texts)) != normalize_for_comparison(
             cleaned_script

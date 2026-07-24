@@ -61,8 +61,16 @@ class LLMClient(ABC):
     """LLM 客户端统一接口。"""
 
     @abstractmethod
-    def send(self, prompt: str) -> str:
-        """发送提示词，返回模型原始文本。失败抛出 LLMClientError 子类。"""
+    def send(self, prompt: str, response_format: dict | None = None) -> str:
+        """发送提示词，返回模型原始文本。失败抛出 LLMClientError 子类。
+
+        response_format：可选的 OpenAI 兼容结构化输出约束
+        （如 json_schema / json_object）。
+        """
+
+
+class _ResponseFormatUnsupported(Exception):
+    """内部信号：服务明确拒绝了当前 response_format（触发受控回退）。"""
 
 
 def validate_base_url(base_url: str) -> str:
@@ -99,6 +107,7 @@ class OpenAICompatibleClient(LLMClient):
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self._base_url = validate_base_url(base_url)
+        self._host = urlsplit(self._base_url).hostname or ""
         if not model.strip():
             raise LLMRequestError("模型名称未配置。")
         self._model = model.strip()
@@ -109,17 +118,53 @@ class OpenAICompatibleClient(LLMClient):
         self._transport = transport
         self._sleep = sleeper
 
-    def send(self, prompt: str) -> str:
+    def send(self, prompt: str, response_format: dict | None = None) -> str:
         api_key = self._secret_store.get(self._secret_id)
         if not api_key:
             raise LLMAuthError("API Key 未配置。请在设置中配置后重试。")
 
+        tiers = self._response_format_tiers(response_format)
+        for index, tier in enumerate(tiers):
+            try:
+                return self._send_with_retries(prompt, api_key, tier)
+            except _ResponseFormatUnsupported:
+                if index + 1 < len(tiers):
+                    # 受控回退：json_schema → json_object（仅此一档）
+                    logger.warning(
+                        "模型服务不支持当前结构化输出，回退下一档 "
+                        "(host=%s, model=%s)",
+                        self._host,
+                        self._model,
+                    )
+                    continue
+                raise LLMRequestError(
+                    "模型服务不支持结构化输出（response_format）。"
+                    "请更换模型，或改用规则拆分。"
+                )
+        raise LLMRequestError("请求未能完成。")  # 理论不可达
+
+    # ------------------------------------------------------------ 内部
+
+    @staticmethod
+    def _response_format_tiers(response_format: dict | None) -> list[dict | None]:
+        """结构化输出层级：strict json_schema 优先，受控回退 json_object。"""
+        if response_format is None:
+            return [None]
+        if response_format.get("type") == "json_schema":
+            return [response_format, {"type": "json_object"}]
+        return [response_format]
+
+    def _send_with_retries(
+        self, prompt: str, api_key: str, response_format: dict | None
+    ) -> str:
         url = self._base_url + CHAT_COMPLETIONS_PATH
-        body = {
+        body: dict = {
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0,
         }
+        if response_format is not None:
+            body["response_format"] = response_format
         headers = {
             "Authorization": f"Bearer {api_key}",
             "User-Agent": USER_AGENT,
@@ -144,11 +189,19 @@ class OpenAICompatibleClient(LLMClient):
                         "网络连接失败。请检查网络后重试，或改用规则拆分。"
                     )
                 else:
+                    if self._is_response_format_rejection(response, response_format):
+                        raise _ResponseFormatUnsupported()
                     outcome = self._classify_response(response)
                     if isinstance(outcome, str):
                         return outcome
                     last_error = outcome
                     if not self._is_retryable(outcome):
+                        logger.info(
+                            "LLM 请求失败 (host=%s, model=%s, status=%s)",
+                            self._host,
+                            self._model,
+                            response.status_code,
+                        )
                         raise outcome
                     self._wait_before_retry(attempt, total_attempts, response)
                     continue
@@ -157,7 +210,22 @@ class OpenAICompatibleClient(LLMClient):
                     self._wait_before_retry(attempt, total_attempts, None)
         raise last_error
 
-    # ------------------------------------------------------------ 内部
+    @staticmethod
+    def _is_response_format_rejection(
+        response: httpx.Response, response_format: dict | None
+    ) -> bool:
+        """服务是否明确拒绝了 response_format（仅在使用了它的 400 上判定）。
+
+        只检查错误体是否点名 response_format / json_schema，
+        不无条件吞掉所有 400。
+        """
+        if response_format is None or response.status_code != 400:
+            return False
+        try:
+            body_text = response.text[:2000].lower()
+        except Exception:  # noqa: BLE001 防御：读取失败按普通 400 处理
+            return False
+        return "response_format" in body_text or "json_schema" in body_text
 
     @staticmethod
     def _is_retryable(error: LLMClientError) -> bool:
