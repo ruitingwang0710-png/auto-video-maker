@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from auto_video_maker.models.project import Project, Scene
 from auto_video_maker.models.selected_asset import AssetValidationError, SelectedAsset
@@ -41,6 +42,11 @@ class SceneService:
         """是否存在未保存的场景修改。"""
         return self._dirty
 
+    @property
+    def project_manager(self) -> ProjectManager:
+        """注入的项目管理器（供 UI 经服务链访问项目级状态方法）。"""
+        return self._project_manager
+
     def discard_changes(self) -> None:
         """放弃未保存标记（内存数据由调用方决定如何处理）。"""
         self._dirty = False
@@ -63,6 +69,7 @@ class SceneService:
         if not texts:
             raise SceneServiceError("文案中没有可拆分的内容。")
         project.scenes = self.build_scenes(texts)
+        self._project_manager.clear_subtitle_path(project)  # 场景集合变化
         self._dirty = True
         logger.info("文案拆分完成：%d 个场景", len(project.scenes))
         return project.scenes
@@ -88,6 +95,7 @@ class SceneService:
             )
         scenes = self.build_scenes(texts)  # 先完整构建
         project.scenes = scenes  # 再一次性替换
+        self._project_manager.clear_subtitle_path(project)  # 场景集合变化
         self._dirty = True
         logger.info("已应用拆分结果：%d 个场景", len(scenes))
         return scenes
@@ -110,25 +118,34 @@ class SceneService:
     # ------------------------------------------------------------ 编辑
 
     def update_scene_text(self, project: Project, index: int, text: str) -> None:
-        """更新指定位置（0 起）场景的文字。"""
+        """更新指定位置（0 起）场景的文字。
+
+        失效规则：文字实际变化时，该场景旧配音引用失效
+        （清空 audio_path/duration），并清空项目字幕引用。
+        """
         scene = self._scene_at(project, index)
         if scene.text != text:
             scene.text = text
+            scene.audio_path = None
+            scene.duration = None
+            self._project_manager.clear_subtitle_path(project)
             self._dirty = True
 
     def add_scene(self, project: Project, text: str = "") -> Scene:
-        """在列表末尾新增场景并重新编号。"""
+        """在列表末尾新增场景并重新编号（场景集合变化 → 字幕引用失效）。"""
         scene = Scene(scene_id=len(project.scenes) + 1, text=text)
         project.scenes.append(scene)
         self.renumber(project)
+        self._project_manager.clear_subtitle_path(project)
         self._dirty = True
         return scene
 
     def delete_scene(self, project: Project, index: int) -> None:
-        """删除指定位置（0 起）的场景并重新编号。"""
+        """删除指定位置（0 起）的场景并重新编号（字幕引用失效）。"""
         self._scene_at(project, index)
         del project.scenes[index]
         self.renumber(project)
+        self._project_manager.clear_subtitle_path(project)
         self._dirty = True
 
     def move_scene_up(self, project: Project, index: int) -> int:
@@ -139,6 +156,7 @@ class SceneService:
         scenes = project.scenes
         scenes[index - 1], scenes[index] = scenes[index], scenes[index - 1]
         self.renumber(project)
+        self._project_manager.clear_subtitle_path(project)
         self._dirty = True
         return index - 1
 
@@ -150,6 +168,7 @@ class SceneService:
         scenes = project.scenes
         scenes[index], scenes[index + 1] = scenes[index + 1], scenes[index]
         self.renumber(project)
+        self._project_manager.clear_subtitle_path(project)
         self._dirty = True
         return index + 1
 
@@ -189,6 +208,35 @@ class SceneService:
         scene.selected_asset = asset.to_dict()
         self._dirty = True
         logger.info("场景 %d 已设置素材：%s", scene.scene_id, asset.local_path)
+
+    # ------------------------------------------------------------ 配音
+
+    def set_scene_audio(
+        self, project: Project, index: int, audio_path: str, duration: float
+    ) -> None:
+        """写入场景配音引用（防御性验证；失败零副作用）。
+
+        成功后清空项目字幕引用（重新生成音频 → 旧字幕失效）。
+        """
+        scene = self._scene_at(project, index)
+        if not isinstance(audio_path, str) or not audio_path.strip():
+            raise SceneServiceError("配音文件路径无效。")
+        if "\\" in audio_path or Path(audio_path).is_absolute():
+            raise SceneServiceError("配音文件路径必须是相对于项目目录的路径。")
+        if any(part == ".." for part in Path(audio_path).parts):
+            raise SceneServiceError("配音文件路径不能包含 '..'。")
+        project_dir = self._project_manager.project_directory(project).resolve()
+        resolved = (project_dir / audio_path).resolve()
+        if not resolved.is_relative_to(project_dir):
+            raise SceneServiceError("配音文件路径指向项目目录之外，已拒绝。")
+        if isinstance(duration, bool) or not isinstance(duration, (int, float)) \
+                or not duration > 0:
+            raise SceneServiceError("配音时长无效。")
+        scene.audio_path = audio_path
+        scene.duration = float(duration)
+        self._project_manager.clear_subtitle_path(project)
+        self._dirty = True
+        logger.info("场景 %d 配音已写入（时长 %.2f 秒）", scene.scene_id, duration)
 
     # ------------------------------------------------------------ 保存
 

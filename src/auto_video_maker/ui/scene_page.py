@@ -31,15 +31,21 @@ from auto_video_maker.services.asset_download_service import (
     AssetDownloadError,
     AssetDownloadService,
 )
+from auto_video_maker.services.audio_service import AudioService, AudioServiceError
 from auto_video_maker.services.keyword_service import KeywordService
 from auto_video_maker.services.scene_service import (
     SceneService,
     SceneServiceError,
     ScenesExistError,
 )
+from auto_video_maker.services.project_manager import ProjectManagerError
 from auto_video_maker.services.smart_split_service import (
     SmartSplitError,
     SmartSplitService,
+)
+from auto_video_maker.services.subtitle_service import (
+    SubtitleService,
+    SubtitleServiceError,
 )
 from auto_video_maker.ui.image_search_dialog import ImageSearchDialog
 from auto_video_maker.ui.scene_preview_dialog import PreviewChoice, ScenePreviewDialog
@@ -48,6 +54,11 @@ _PREVIEW_LENGTH = 24
 
 PRIVACY_NOTICE = (
     "智能分镜会将当前文案发送至你配置的模型服务。\n"
+    "请确认文案不包含不希望提交给第三方的信息。"
+)
+
+TTS_PRIVACY_NOTICE = (
+    "生成配音会将场景文案发送至微软在线语音服务（edge-tts）。\n"
     "请确认文案不包含不希望提交给第三方的信息。"
 )
 
@@ -65,6 +76,8 @@ class ScenePage(QDialog):
         download_service: AssetDownloadService | None = None,
         keyword_service: KeywordService | None = None,
         project_root: Path | None = None,
+        audio_service: AudioService | None = None,
+        subtitle_service: SubtitleService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -76,8 +89,14 @@ class ScenePage(QDialog):
         self._download_service = download_service
         self._keyword_service = keyword_service
         self._project_root = project_root
+        self._audio_service = audio_service
+        self._subtitle_service = subtitle_service
         self._smart_task_id: int | None = None
         self._progress: QProgressDialog | None = None
+        self._batch_queue: list[int] = []
+        self._batch_total = 0
+        self._batch_cancelled = False
+        self._audio_task_id: int | None = None
 
         self.setWindowTitle(f"场景编辑 — {project.project_name}")
         self.setMinimumSize(720, 480)
@@ -141,6 +160,22 @@ class ScenePage(QDialog):
         asset_buttons.addWidget(self.local_image_button)
         asset_buttons.addStretch(1)
 
+        # 配音与字幕区域
+        self.audio_status_label = QLabel("配音：未生成", self)
+        self.gen_audio_button = QPushButton("生成语音", self)
+        self.gen_audio_button.clicked.connect(self._on_generate_audio)
+        self.gen_all_audio_button = QPushButton("生成全部语音", self)
+        self.gen_all_audio_button.clicked.connect(self._on_generate_all_audio)
+        self.gen_subtitle_button = QPushButton("生成字幕", self)
+        self.gen_subtitle_button.clicked.connect(self._on_generate_subtitles)
+        self.subtitle_status_label = QLabel("字幕：未生成", self)
+
+        audio_buttons = QHBoxLayout()
+        audio_buttons.addWidget(self.gen_audio_button)
+        audio_buttons.addWidget(self.gen_all_audio_button)
+        audio_buttons.addWidget(self.gen_subtitle_button)
+        audio_buttons.addStretch(1)
+
         right_layout = QVBoxLayout()
         right_layout.addWidget(QLabel("场景文字", self))
         right_layout.addWidget(self.editor)
@@ -148,6 +183,10 @@ class ScenePage(QDialog):
         right_layout.addWidget(QLabel("场景配图", self))
         right_layout.addWidget(self.asset_status_label)
         right_layout.addLayout(asset_buttons)
+        right_layout.addWidget(QLabel("配音与字幕", self))
+        right_layout.addWidget(self.audio_status_label)
+        right_layout.addWidget(self.subtitle_status_label)
+        right_layout.addLayout(audio_buttons)
 
         layout = QHBoxLayout(self)
         layout.addLayout(left_layout, 3)
@@ -471,6 +510,186 @@ class ScenePage(QDialog):
                 f"作者：{author}    许可证：{license_name}"
             )
 
+    # ------------------------------------------------------------ 配音与字幕
+
+    def _audio_features_ready(self) -> bool:
+        return self._audio_service is not None and self._task_runner is not None
+
+    def _refresh_audio_status(self, row: int) -> None:
+        has_selection = 0 <= row < len(self._project.scenes)
+        ready = self._audio_features_ready()
+        self.gen_audio_button.setEnabled(has_selection and ready)
+        self.gen_all_audio_button.setEnabled(
+            ready and bool(self._project.scenes)
+        )
+        if has_selection:
+            scene = self._project.scenes[row]
+            if scene.audio_path and scene.duration:
+                self.audio_status_label.setText(
+                    f"配音：已生成（{scene.duration:.1f} 秒）"
+                )
+            else:
+                self.audio_status_label.setText("配音：未生成")
+        else:
+            self.audio_status_label.setText("配音：未生成")
+        # 字幕状态与按钮
+        subtitle_path = self._project.output.get("subtitle_path")
+        self.subtitle_status_label.setText(
+            f"字幕：已生成（{subtitle_path}）" if subtitle_path else "字幕：未生成"
+        )
+        all_have_audio = bool(self._project.scenes) and all(
+            scene.audio_path and scene.duration for scene in self._project.scenes
+        )
+        can_subtitle = (
+            self._subtitle_service is not None
+            and self._project_root is not None
+            and all_have_audio
+        )
+        self.gen_subtitle_button.setEnabled(can_subtitle)
+        self.gen_subtitle_button.setToolTip(
+            "" if can_subtitle else "请先为所有场景生成语音。"
+        )
+
+    def _tts_privacy_gate(self) -> bool:
+        assert self._audio_service is not None
+        if not self._audio_service.needs_privacy_confirmation():
+            return True
+        answer = QMessageBox.question(
+            self,
+            "发送文案确认",
+            TTS_PRIVACY_NOTICE,
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Ok:
+            return False  # 拒绝：零网络请求、零任务提交
+        self._audio_service.record_privacy_confirmation()
+        return True
+
+    def _on_generate_audio(self) -> None:
+        row = self.scene_list.currentRow()
+        if row < 0 or not self._audio_features_ready():
+            return
+        if not self._tts_privacy_gate():
+            return
+        self._start_audio_task([row], batch=False)
+
+    def _on_generate_all_audio(self) -> None:
+        if not self._audio_features_ready() or not self._project.scenes:
+            return
+        if not self._tts_privacy_gate():
+            return
+        self._start_audio_task(list(range(len(self._project.scenes))), batch=True)
+
+    def _start_audio_task(self, indices: list[int], batch: bool) -> None:
+        self._batch_queue = list(indices)
+        self._batch_total = len(indices)
+        self._batch_cancelled = False
+        self._set_audio_buttons_enabled(False)
+        progress = QProgressDialog(
+            "正在生成配音…", "取消", 0, self._batch_total, self
+        )
+        progress.setWindowTitle("生成语音")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        progress.canceled.connect(self._on_audio_cancel)
+        self._progress = progress
+        progress.show()
+        self._audio_batch_next()
+
+    def _audio_batch_next(self) -> None:
+        if self._batch_cancelled or not self._batch_queue:
+            self._finish_audio_task()
+            return
+        index = self._batch_queue.pop(0)
+        service = self._audio_service
+        project = self._project
+        assert service is not None and self._task_runner is not None
+        self._audio_task_id = self._task_runner.run(
+            lambda: service.generate_for_scene(project, index),
+            lambda result, idx=index: self._on_audio_scene_done(idx, result),
+            self._on_audio_error,
+        )
+
+    def _on_audio_scene_done(self, index: int, result: tuple[str, float]) -> None:
+        if self._batch_cancelled:
+            return  # 软取消：晚到结果不写入
+        audio_path, duration = result
+        try:
+            self._scene_service.set_scene_audio(
+                self._project, index, audio_path, duration
+            )
+        except SceneServiceError as exc:
+            self._finish_audio_task()
+            QMessageBox.warning(self, "无法保存配音", str(exc))
+            return
+        if self._progress is not None:
+            self._progress.setValue(self._batch_total - len(self._batch_queue))
+        if self._batch_queue:
+            self._audio_batch_next()
+        else:
+            self._finish_audio_task()
+
+    def _on_audio_error(self, exc: Exception) -> None:
+        """中途失败：停止；已完成场景保留；失败及未开始的保持原样。"""
+        self._finish_audio_task()
+        QMessageBox.warning(self, "配音生成失败", str(exc))
+
+    def _on_audio_cancel(self) -> None:
+        self._batch_cancelled = True
+        self._batch_queue = []
+        if self._audio_task_id is not None and self._task_runner is not None:
+            self._task_runner.cancel(self._audio_task_id)
+        self._finish_audio_task()
+
+    def _finish_audio_task(self) -> None:
+        self._audio_task_id = None
+        self._batch_queue = []
+        if self._progress is not None:
+            self._progress.blockSignals(True)
+            self._progress.close()
+            self._progress = None
+        self._set_audio_buttons_enabled(True)
+        self._refresh_audio_status(self.scene_list.currentRow())
+        self._refresh_smart_split_button()
+
+    def _set_audio_buttons_enabled(self, enabled: bool) -> None:
+        self.gen_audio_button.setEnabled(enabled)
+        self.gen_all_audio_button.setEnabled(enabled)
+        self.gen_subtitle_button.setEnabled(enabled)
+        self.split_button.setEnabled(enabled)
+        self.smart_split_button.setEnabled(enabled)
+
+    def _on_generate_subtitles(self) -> None:
+        if self._subtitle_service is None or self._project_root is None:
+            return
+        try:
+            relative_path = self._subtitle_service.generate(
+                self._project, self._project_root
+            )
+        except SubtitleServiceError as exc:
+            QMessageBox.warning(self, "无法生成字幕", str(exc))
+            return
+        try:
+            self._apply_subtitle_path(relative_path)
+        except (ProjectManagerError, SceneServiceError) as exc:
+            QMessageBox.warning(self, "无法保存字幕引用", str(exc))
+            return
+        self._refresh_audio_status(self.scene_list.currentRow())
+        QMessageBox.information(
+            self,
+            "字幕已生成",
+            f"字幕文件已保存：\n{self._project_root / relative_path}",
+        )
+
+    def _apply_subtitle_path(self, relative_path: str) -> None:
+        """经项目状态 Service 写入引用并立即保存（不留未保存悬挂）。"""
+        self._scene_service.project_manager.set_subtitle_path(
+            self._project, relative_path
+        )
+        self._scene_service.save(self._project)
+
     # ------------------------------------------------------------ 关闭保护
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (Qt 命名)
@@ -515,6 +734,7 @@ class ScenePage(QDialog):
             has_selection and row < len(self._project.scenes) - 1
         )
         self._refresh_asset_status(row)
+        self._refresh_audio_status(row)
 
     def _refresh_list(self, select_row: int | None = None) -> None:
         self.scene_list.blockSignals(True)

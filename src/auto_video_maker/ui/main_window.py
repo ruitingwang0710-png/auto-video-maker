@@ -24,7 +24,9 @@ from auto_video_maker.infrastructure.task_runner import TaskRunner
 from auto_video_maker.models.project import Project
 from auto_video_maker.providers.image_provider import ImageProvider
 from auto_video_maker.services.asset_download_service import AssetDownloadService
+from auto_video_maker.services.audio_service import AudioService
 from auto_video_maker.services.keyword_service import KeywordService
+from auto_video_maker.services.subtitle_service import SubtitleService
 from auto_video_maker.services.project_manager import (
     PROJECT_FILE_NAME,
     ProjectManager,
@@ -58,6 +60,8 @@ class MainWindow(QMainWindow):
         image_provider: ImageProvider | None = None,
         download_service: AssetDownloadService | None = None,
         keyword_service: KeywordService | None = None,
+        audio_service: AudioService | None = None,
+        subtitle_service: SubtitleService | None = None,
     ) -> None:
         super().__init__()
         self._project_manager = project_manager
@@ -69,6 +73,8 @@ class MainWindow(QMainWindow):
         self._image_provider = image_provider
         self._download_service = download_service
         self._keyword_service = keyword_service
+        self._audio_service = audio_service
+        self._subtitle_service = subtitle_service
 
         self.setWindowTitle(APP_NAME)
         self.setMinimumSize(520, 480)
@@ -144,6 +150,8 @@ class MainWindow(QMainWindow):
             download_service=self._download_service,
             keyword_service=self._keyword_service,
             project_root=self._project_manager.project_directory(project),
+            audio_service=self._audio_service,
+            subtitle_service=self._subtitle_service,
             parent=self,
         )
         page.exec()

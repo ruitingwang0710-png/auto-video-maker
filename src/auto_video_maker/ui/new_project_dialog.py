@@ -42,6 +42,17 @@ class NewProjectDialog(QDialog):
         for ratio, resolution in ASPECT_RATIO_RESOLUTIONS.items():
             self.aspect_combo.addItem(f"{ratio}（{resolution}）", userData=ratio)
 
+        # 语音与语速：UI 显示文字 → 模型稳定内部值
+        self.voice_combo = QComboBox(self)
+        self.voice_combo.addItem("女声", userData="female")
+        self.voice_combo.addItem("男声", userData="male")
+
+        self.rate_combo = QComboBox(self)
+        self.rate_combo.addItem("慢", userData="-20%")
+        self.rate_combo.addItem("正常", userData="+0%")
+        self.rate_combo.addItem("快", userData="+20%")
+        self.rate_combo.setCurrentIndex(1)
+
         self.output_dir_edit = QLineEdit(self)
         self.output_dir_edit.setPlaceholderText("选择项目保存位置")
         browse_button = QPushButton("浏览…", self)
@@ -54,6 +65,8 @@ class NewProjectDialog(QDialog):
         form.addRow("项目名称", self.name_edit)
         form.addRow("文案", self.script_edit)
         form.addRow("视频比例", self.aspect_combo)
+        form.addRow("语音", self.voice_combo)
+        form.addRow("语速", self.rate_combo)
         form.addRow("输出目录", output_row)
 
         buttons = QDialogButtonBox(
@@ -78,6 +91,8 @@ class NewProjectDialog(QDialog):
                 original_script=self.script_edit.toPlainText(),
                 aspect_ratio=self.aspect_combo.currentData(),
                 output_directory=self.output_dir_edit.text(),
+                voice=self.voice_combo.currentData(),
+                speech_rate=self.rate_combo.currentData(),
             )
         except ProjectManagerError as exc:
             QMessageBox.warning(self, "无法创建项目", str(exc))

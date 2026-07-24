@@ -56,6 +56,8 @@ class ProjectManager:
         original_script: str,
         aspect_ratio: str,
         output_directory: str | os.PathLike[str],
+        voice: str = "default",
+        speech_rate: str = "+0%",
     ) -> Project:
         """校验输入、创建项目目录结构并保存 project.json，返回 Project。"""
         try:
@@ -77,12 +79,15 @@ class ProjectManager:
                 f"目录 {project_dir} 中已存在项目。请更换项目名称或输出目录。"
             )
 
+        from auto_video_maker.models.project import _sanitize_speech_rate
+
         settings = ProjectSettings(
             aspect_ratio=aspect_ratio,
             resolution=ASPECT_RATIO_RESOLUTIONS[aspect_ratio],
-            voice="default",
+            voice=voice if voice in ("female", "male", "default") else "default",
             subtitle_enabled=True,
             output_directory=str(output_dir),
+            speech_rate=_sanitize_speech_rate(speech_rate),
         )
         project = Project(
             project_name=name,
@@ -123,6 +128,37 @@ class ProjectManager:
             ) from exc
         logger.info("项目已保存: %s", project_file)
         return project_file
+
+    # ------------------------------------------------------------ 项目级输出状态
+
+    def set_subtitle_path(self, project: Project, subtitle_path: str) -> None:
+        """写入 Project.output.subtitle_path（项目级状态，相对路径）。"""
+        self._validate_relative_output_path(project, subtitle_path)
+        project.output["subtitle_path"] = subtitle_path
+        logger.info("字幕引用已写入: %s", subtitle_path)
+
+    def clear_subtitle_path(self, project: Project) -> None:
+        """清空字幕引用（派生产物失效规则）。"""
+        if project.output.get("subtitle_path"):
+            project.output["subtitle_path"] = None
+            logger.info("字幕引用已失效")
+
+    def _validate_relative_output_path(self, project: Project, path_str: str) -> None:
+        from pathlib import PurePosixPath
+
+        if not isinstance(path_str, str) or not path_str.strip():
+            raise ProjectManagerError("输出文件路径不能为空。")
+        if "\\" in path_str:
+            raise ProjectManagerError("输出文件路径不能包含反斜杠。")
+        pure = PurePosixPath(path_str)
+        if pure.is_absolute() or Path(path_str).is_absolute():
+            raise ProjectManagerError("输出文件路径必须是相对于项目目录的路径。")
+        if any(part == ".." for part in pure.parts):
+            raise ProjectManagerError("输出文件路径不能包含 '..'。")
+        project_dir = self.project_directory(project).resolve()
+        resolved = (project_dir / path_str).resolve()
+        if not resolved.is_relative_to(project_dir):
+            raise ProjectManagerError("输出文件路径指向项目目录之外，已拒绝。")
 
     def load_project(self, path: str | os.PathLike[str]) -> Project:
         """从 project.json 文件或项目目录打开项目。"""

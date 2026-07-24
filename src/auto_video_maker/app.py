@@ -21,12 +21,16 @@ from auto_video_maker.infrastructure.secret_store import (
     SecretStore,
 )
 from auto_video_maker.infrastructure.task_runner import TaskRunner
+from auto_video_maker.infrastructure.audio_probe import AudioProbe
 from auto_video_maker.providers.image_provider import OpenverseImageProvider
 from auto_video_maker.providers.llm_client import LLMClient, OpenAICompatibleClient
 from auto_video_maker.providers.llm_scene_splitter import LLMSceneSplitter
+from auto_video_maker.providers.tts_provider import EdgeTTSProvider
 from auto_video_maker.services.asset_download_service import AssetDownloadService
+from auto_video_maker.services.audio_service import AudioService
 from auto_video_maker.services.keyword_service import KeywordService
 from auto_video_maker.services.project_manager import ProjectManager
+from auto_video_maker.services.subtitle_service import SubtitleService
 from auto_video_maker.services.scene_service import SceneService
 from auto_video_maker.services.scene_splitter import RuleBasedSceneSplitter, SceneSplitter
 from auto_video_maker.services.smart_split_service import SmartSplitService
@@ -88,6 +92,13 @@ def main() -> int:
         llm_client_factory=llm_client_factory,
     )
 
+    tts_provider = EdgeTTSProvider()
+    audio_probe = AudioProbe()
+    audio_service = AudioService(
+        tts_provider, audio_probe, project_manager, config_store
+    )
+    subtitle_service = SubtitleService()
+
     window = MainWindow(
         project_manager,
         scene_service,
@@ -98,6 +109,8 @@ def main() -> int:
         image_provider=image_provider,
         download_service=download_service,
         keyword_service=keyword_service,
+        audio_service=audio_service,
+        subtitle_service=subtitle_service,
     )
     window.show()
     exit_code = app.exec()
