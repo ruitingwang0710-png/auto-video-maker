@@ -108,6 +108,82 @@ def test_preview_cancel_changes_nothing(tmp_path: Path) -> None:
     assert (tmp_path / "out" / "取消预览" / "project.json").read_text("utf-8") == saved_json
 
 
+def test_invalid_scenes_structure_leaves_project_untouched(tmp_path: Path) -> None:
+    """结构验证失败：不修改项目、不产生 dirty（Groq 兼容修复的回归锚点）。"""
+    config_store = ConfigStore(tmp_path / "config.json")
+    secret_store = FakeSecretStore()
+    config_store.save(LLMSettings(enabled=True, base_url=BASE_URL, model="m"))
+    secret_store.set(secret_id_for_base_url(BASE_URL), "test-key")
+
+    def bad_structure_handler(request: httpx.Request) -> httpx.Response:
+        # 模拟 gpt-oss 类模型：数组项是对象而非字符串
+        content = json.dumps(
+            {"scenes": [{"scene": "第一段"}, {"scene": "第二段"}]},
+            ensure_ascii=False,
+        )
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": content}}]}
+        )
+
+    def factory(settings: LLMSettings):
+        client = OpenAICompatibleClient(
+            base_url=settings.base_url,
+            model=settings.model,
+            secret_store=secret_store,
+            max_retries=0,
+            transport=httpx.MockTransport(bad_structure_handler),
+            sleeper=lambda s: None,
+        )
+        return LLMSceneSplitter(client)
+
+    manager = ProjectManager()
+    rule_splitter = RuleBasedSceneSplitter()
+    scene_service = SceneService(rule_splitter, manager)
+    smart = SmartSplitService(config_store, secret_store, rule_splitter, factory)
+
+    project = manager.create_project("结构失败", SCRIPT, "9:16", tmp_path / "out")
+    saved = (tmp_path / "out" / "结构失败" / "project.json").read_text("utf-8")
+
+    from auto_video_maker.providers.llm_scene_splitter import LLMSplitError
+
+    with pytest.raises(LLMSplitError, match="格式不符合要求"):
+        smart.split_with_llm(SCRIPT)
+
+    assert project.scenes == []
+    assert not scene_service.is_dirty
+    assert (tmp_path / "out" / "结构失败" / "project.json").read_text("utf-8") == saved
+
+
+def test_new_scenes_object_protocol_end_to_end(tmp_path: Path) -> None:
+    """新协议 {"scenes": [...]} 的完整链路。"""
+    config_store = ConfigStore(tmp_path / "config.json")
+    secret_store = FakeSecretStore()
+    config_store.save(LLMSettings(enabled=True, base_url=BASE_URL, model="m"))
+    secret_store.set(secret_id_for_base_url(BASE_URL), "test-key")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["response_format"]["type"] == "json_schema"  # strict 优先
+        content = json.dumps({"scenes": LLM_SPLIT}, ensure_ascii=False)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": content}}]}
+        )
+
+    def factory(settings: LLMSettings):
+        client = OpenAICompatibleClient(
+            base_url=settings.base_url,
+            model=settings.model,
+            secret_store=secret_store,
+            transport=httpx.MockTransport(handler),
+            sleeper=lambda s: None,
+        )
+        return LLMSceneSplitter(client)
+
+    rule_splitter = RuleBasedSceneSplitter()
+    smart = SmartSplitService(config_store, secret_store, rule_splitter, factory)
+    assert smart.split_with_llm(SCRIPT) == LLM_SPLIT
+
+
 def test_llm_failure_then_rules_fallback_by_ui_choice(tmp_path: Path) -> None:
     """LLM 失败 → UI 选择改用规则拆分 → split_with_rules 可用。"""
     config_store = ConfigStore(tmp_path / "config.json")

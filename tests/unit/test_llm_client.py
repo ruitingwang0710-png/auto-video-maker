@@ -189,6 +189,110 @@ class TestRetryPolicy:
             client.send("x")
 
 
+class TestResponseFormat:
+    SCHEMA = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "scene_split_result",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {"scenes": {"type": "array", "items": {"type": "string"}}},
+                "required": ["scenes"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+    def test_strict_schema_included_in_request(self) -> None:
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = json.loads(request.content)
+            return ok_response('{"scenes": ["a"]}')
+
+        client, _ = make_client(handler)
+        client.send("提示", response_format=self.SCHEMA)
+        sent = captured["body"]["response_format"]
+        assert sent["type"] == "json_schema"
+        assert sent["json_schema"]["name"] == "scene_split_result"
+        assert sent["json_schema"]["strict"] is True
+        assert sent["json_schema"]["schema"]["required"] == ["scenes"]
+
+    def test_no_response_format_field_when_not_requested(self) -> None:
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = json.loads(request.content)
+            return ok_response()
+
+        client, _ = make_client(handler)
+        client.send("提示")
+        assert "response_format" not in captured["body"]
+
+    def test_controlled_fallback_to_json_object(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """服务明确拒绝 json_schema → 受控回退 json_object 后成功。"""
+        bodies: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            bodies.append(body)
+            rf = body.get("response_format", {})
+            if rf.get("type") == "json_schema":
+                return httpx.Response(
+                    400,
+                    json={"error": {"message": "response_format json_schema is not supported"}},
+                )
+            return ok_response('{"scenes": ["a"]}')
+
+        client, _ = make_client(handler)
+        with caplog.at_level("DEBUG"):
+            result = client.send("提示", response_format=self.SCHEMA)
+        assert result == '{"scenes": ["a"]}'
+        assert len(bodies) == 2
+        assert bodies[0]["response_format"]["type"] == "json_schema"
+        assert bodies[1]["response_format"] == {"type": "json_object"}
+        # 回退过程不泄漏 Key
+        joined = " ".join(record.getMessage() for record in caplog.records)
+        assert API_KEY not in joined and API_KEY[:8] not in joined
+
+    def test_json_object_also_rejected_raises(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                400, json={"error": {"message": "response_format is not supported"}}
+            )
+
+        client, _ = make_client(handler)
+        with pytest.raises(LLMRequestError, match="结构化输出"):
+            client.send("提示", response_format=self.SCHEMA)
+
+    def test_other_400_does_not_fallback(self) -> None:
+        """与 response_format 无关的 400：不回退、不吞掉。"""
+        calls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(json.loads(request.content))
+            return httpx.Response(
+                400, json={"error": {"message": "model not found"}}
+            )
+
+        client, _ = make_client(handler, max_retries=3)
+        with pytest.raises(LLMRequestError, match="400"):
+            client.send("提示", response_format=self.SCHEMA)
+        assert len(calls) == 1  # 无回退、无重试
+        assert calls[0]["response_format"]["type"] == "json_schema"
+
+    def test_400_without_format_never_treated_as_unsupported(self) -> None:
+        """未使用 response_format 时，任何 400 都按普通请求错误处理。"""
+        client, _ = make_client(lambda r: httpx.Response(
+            400, json={"error": {"message": "response_format mention but unused"}}
+        ))
+        with pytest.raises(LLMRequestError, match="400"):
+            client.send("提示")
+
+
 class TestSecurityRules:
     def test_redirect_not_followed(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
