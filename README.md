@@ -11,11 +11,12 @@
 
 ## 当前状态
 
-Phase 3 已完成：图片素材系统。
+Phase 4 已完成：语音和字幕。
 
-- Phase 1（项目系统）、Phase 2（文案拆分与场景系统）：已完成并通过 macOS 本机验收
-- Phase 2.5（LLM 智能分镜）：implementation complete and automated tests
-  passed; live LLM provider integration test deferred
+- Phase 1（项目系统）、Phase 2（文案拆分）、Phase 2.5（LLM 智能分镜，
+  含真实 Groq 验收）、Phase 3（图片素材系统）：已完成并通过 macOS 本机验收
+- Phase 4：implementation complete and automated tests passed;
+  live edge-tts synthesis test deferred to macOS acceptance
 
 已实现：
 
@@ -36,10 +37,23 @@ Phase 3 已完成：图片素材系统。
   Openverse 搜索开放许可图片（仅 CC0/PDM/BY）→ 查看候选（作者与许可证）→
   下载（15MB 上限、实际格式校验、防 decompression bomb）或本地图片替换 →
   版权元数据完整存入 project.json（相对路径，防路径逃逸）
+- 语音和字幕：新建项目可选语音（女声/男声）与语速（慢/正常/快）；
+  逐场景或批量生成中文配音（edge-tts，内容寻址缓存、mp3 实测时长）；
+  基于时长生成同步 SRT 字幕（长场景自动拆多条、每行 ≤16 字）；
+  失效保护——修改文字后旧配音失效、场景变动后旧字幕失效
 - 基础日志
 - 单元测试与集成测试
 
-尚未实现（后续阶段）：TTS、字幕、FFmpeg 视频生成、credits.txt 导出、打包。
+尚未实现（后续阶段）：FFmpeg 视频生成、字幕烧录、credits.txt 导出、打包。
+
+## 配音与字幕使用说明
+
+1. 新建项目时选择语音与语速（创建后暂不可修改）
+2. 场景页选中场景 → 「生成语音」；或「生成全部语音」批量生成
+   （首次会提示文案将发送至微软在线语音服务）
+3. 全部场景有配音后 → 「生成字幕」，SRT 保存在项目 subtitles/ 目录
+4. 修改场景文字后该场景需重新生成语音；增删/移动场景后需重新生成字幕
+5. 相同文字与语音设置的重复生成走本地缓存，不重复联网
 
 ## 智能分镜设置说明
 

@@ -135,7 +135,28 @@ def test_scene_page_without_smart_services(
     # 未注入图片服务时配图按钮安全禁用
     assert not page.search_image_button.isEnabled()
     assert not page.local_image_button.isEnabled()
+    # 未注入音频/字幕服务时配音按钮安全禁用
+    assert not page.gen_audio_button.isEnabled()
+    assert not page.gen_all_audio_button.isEnabled()
+    assert not page.gen_subtitle_button.isEnabled()
+    assert page.audio_status_label.text() == "配音：未生成"
+    assert page.subtitle_status_label.text() == "字幕：未生成"
     page.close()
+
+
+def test_new_project_dialog_voice_rate_values(
+    qapp: QApplication, manager: ProjectManager
+) -> None:
+    """新建项目窗口：UI 显示文字 → 稳定内部值。"""
+    from auto_video_maker.ui.new_project_dialog import NewProjectDialog
+
+    dialog = NewProjectDialog(manager)
+    voices = [dialog.voice_combo.itemData(i) for i in range(dialog.voice_combo.count())]
+    rates = [dialog.rate_combo.itemData(i) for i in range(dialog.rate_combo.count())]
+    assert voices == ["female", "male"]
+    assert rates == ["-20%", "+0%", "+20%"]
+    assert dialog.rate_combo.currentData() == "+0%"  # 默认正常语速
+    dialog.close()
 
 
 def test_scene_page_asset_status_display(

@@ -60,7 +60,10 @@ def normalize_base_url(base_url: str) -> str:
 
 @dataclass
 class LLMSettings:
-    """LLM 智能分镜配置（不含 API Key）。"""
+    """应用配置（LLM 智能分镜 + TTS 隐私状态；不含任何 API Key）。
+
+    TTS 隐私确认与 LLM 隐私确认完全分离，互不影响。
+    """
 
     enabled: bool = False
     base_url: str = ""
@@ -68,6 +71,9 @@ class LLMSettings:
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     max_retries: int = DEFAULT_MAX_RETRIES
     privacy_confirmed_for_base_url: str = ""
+    tts_privacy_confirmed: bool = False
+    tts_privacy_provider: str = ""
+    tts_privacy_notice_version: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -77,6 +83,9 @@ class LLMSettings:
             "timeout_seconds": self.timeout_seconds,
             "max_retries": self.max_retries,
             "privacy_confirmed_for_base_url": self.privacy_confirmed_for_base_url,
+            "tts_privacy_confirmed": self.tts_privacy_confirmed,
+            "tts_privacy_provider": self.tts_privacy_provider,
+            "tts_privacy_notice_version": self.tts_privacy_notice_version,
         }
 
     @classmethod
@@ -96,6 +105,12 @@ class LLMSettings:
                 return float(value)
             return float(getattr(defaults, key))
 
+        def _int(key: str, minimum: int) -> int:
+            value = data.get(key, getattr(defaults, key))
+            if isinstance(value, int) and not isinstance(value, bool) and value >= minimum:
+                return value
+            return getattr(defaults, key)
+
         return cls(
             enabled=_bool("enabled"),
             base_url=_str("base_url"),
@@ -103,6 +118,9 @@ class LLMSettings:
             timeout_seconds=_number("timeout_seconds", 1.0),
             max_retries=int(_number("max_retries", 0)),
             privacy_confirmed_for_base_url=_str("privacy_confirmed_for_base_url"),
+            tts_privacy_confirmed=_bool("tts_privacy_confirmed"),
+            tts_privacy_provider=_str("tts_privacy_provider"),
+            tts_privacy_notice_version=_int("tts_privacy_notice_version", 0),
         )
 
 

@@ -96,3 +96,32 @@ class TestConfigStore:
         settings = store.load()
         assert settings.enabled is True
         assert settings.model == ""
+        # TTS 隐私字段缺失时的默认值（旧配置兼容）
+        assert settings.tts_privacy_confirmed is False
+        assert settings.tts_privacy_provider == ""
+        assert settings.tts_privacy_notice_version == 0
+
+    def test_tts_privacy_fields_roundtrip(self, tmp_path: Path) -> None:
+        store = self.make_store(tmp_path)
+        settings = LLMSettings(
+            tts_privacy_confirmed=True,
+            tts_privacy_provider="edge-tts",
+            tts_privacy_notice_version=1,
+        )
+        store.save(settings)
+        loaded = store.load()
+        assert loaded.tts_privacy_confirmed is True
+        assert loaded.tts_privacy_provider == "edge-tts"
+        assert loaded.tts_privacy_notice_version == 1
+
+    def test_tts_privacy_fields_tolerant(self, tmp_path: Path) -> None:
+        store = self.make_store(tmp_path)
+        store.path.parent.mkdir(parents=True)
+        store.path.write_text(
+            json.dumps({"tts_privacy_confirmed": "yes",
+                        "tts_privacy_notice_version": "one"}),
+            encoding="utf-8",
+        )
+        settings = store.load()
+        assert settings.tts_privacy_confirmed is False
+        assert settings.tts_privacy_notice_version == 0

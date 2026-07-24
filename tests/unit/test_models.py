@@ -38,6 +38,23 @@ def test_project_defaults() -> None:
     assert project.output == {"video_path": None, "subtitle_path": None, "status": "draft"}
 
 
+def test_speech_rate_default_and_serialization() -> None:
+    settings = ProjectSettings()
+    assert settings.speech_rate == "+0%"
+    assert ProjectSettings.from_dict(settings.to_dict()).speech_rate == "+0%"
+
+
+def test_speech_rate_valid_values_kept() -> None:
+    for rate in ("-20%", "+0%", "+20%"):
+        assert ProjectSettings.from_dict({"speech_rate": rate}).speech_rate == rate
+
+
+def test_speech_rate_missing_or_invalid_falls_back() -> None:
+    assert ProjectSettings.from_dict({}).speech_rate == "+0%"
+    assert ProjectSettings.from_dict({"speech_rate": "300%"}).speech_rate == "+0%"
+    assert ProjectSettings.from_dict({"speech_rate": 20}).speech_rate == "+0%"
+
+
 def test_aspect_ratio_mapping() -> None:
     assert ASPECT_RATIO_RESOLUTIONS["9:16"] == "1080x1920"
     assert ASPECT_RATIO_RESOLUTIONS["16:9"] == "1920x1080"

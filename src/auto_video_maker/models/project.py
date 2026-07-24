@@ -6,12 +6,19 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 PROJECT_VERSION = "0.1"
+
+# 语速仅允许三档（TASK.md Phase 4 决议）
+VALID_SPEECH_RATES = ("-20%", "+0%", "+20%")
+DEFAULT_SPEECH_RATE = "+0%"
 
 ASPECT_RATIO_RESOLUTIONS: dict[str, str] = {
     "9:16": "1080x1920",
@@ -66,15 +73,29 @@ class Scene:
         )
 
 
+def _sanitize_speech_rate(value: Any) -> str:
+    """语速容错：缺失/非法值安全回落默认档，不得原样传给 Provider。"""
+    if isinstance(value, str) and value in VALID_SPEECH_RATES:
+        return value
+    if value is not None and value != DEFAULT_SPEECH_RATE:
+        logger.warning("非法语速值已回落为默认档: %r", value)
+    return DEFAULT_SPEECH_RATE
+
+
 @dataclass
 class ProjectSettings:
-    """项目级设置。"""
+    """项目级设置。
+
+    voice 只保存稳定内部值（"female" / "male"；旧项目 "default" 兼容为
+    female，映射在 TTSProvider 内进行）。speech_rate 仅三档合法。
+    """
 
     aspect_ratio: str = "9:16"
     resolution: str = "1080x1920"
     voice: str = "default"
     subtitle_enabled: bool = True
     output_directory: str = ""
+    speech_rate: str = DEFAULT_SPEECH_RATE
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -83,6 +104,7 @@ class ProjectSettings:
             "voice": self.voice,
             "subtitle_enabled": self.subtitle_enabled,
             "output_directory": self.output_directory,
+            "speech_rate": self.speech_rate,
         }
 
     @classmethod
@@ -93,6 +115,7 @@ class ProjectSettings:
             voice=str(data.get("voice", "default")),
             subtitle_enabled=bool(data.get("subtitle_enabled", True)),
             output_directory=str(data.get("output_directory", "")),
+            speech_rate=_sanitize_speech_rate(data.get("speech_rate")),
         )
 
 
