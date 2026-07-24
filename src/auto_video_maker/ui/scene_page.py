@@ -15,19 +15,31 @@ from PySide6.QtWidgets import (
     QListWidget,
     QMessageBox,
     QPlainTextEdit,
+    QProgressDialog,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
+from auto_video_maker.infrastructure.task_runner import TaskRunner
 from auto_video_maker.models.project import Project
 from auto_video_maker.services.scene_service import (
     SceneService,
     SceneServiceError,
     ScenesExistError,
 )
+from auto_video_maker.services.smart_split_service import (
+    SmartSplitError,
+    SmartSplitService,
+)
+from auto_video_maker.ui.scene_preview_dialog import PreviewChoice, ScenePreviewDialog
 
 _PREVIEW_LENGTH = 24
+
+PRIVACY_NOTICE = (
+    "智能分镜会将当前文案发送至你配置的模型服务。\n"
+    "请确认文案不包含不希望提交给第三方的信息。"
+)
 
 
 class ScenePage(QDialog):
@@ -37,11 +49,17 @@ class ScenePage(QDialog):
         self,
         project: Project,
         scene_service: SceneService,
+        smart_split_service: SmartSplitService | None = None,
+        task_runner: TaskRunner | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._project = project
         self._scene_service = scene_service
+        self._smart_split_service = smart_split_service
+        self._task_runner = task_runner
+        self._smart_task_id: int | None = None
+        self._progress: QProgressDialog | None = None
 
         self.setWindowTitle(f"场景编辑 — {project.project_name}")
         self.setMinimumSize(720, 480)
@@ -52,6 +70,8 @@ class ScenePage(QDialog):
 
         self.split_button = QPushButton("拆分文案", self)
         self.split_button.clicked.connect(self._on_split)
+        self.smart_split_button = QPushButton("智能拆分", self)
+        self.smart_split_button.clicked.connect(self._on_smart_split)
         self.add_button = QPushButton("新增场景", self)
         self.add_button.clicked.connect(self._on_add)
         self.delete_button = QPushButton("删除场景", self)
@@ -64,6 +84,7 @@ class ScenePage(QDialog):
         list_buttons = QHBoxLayout()
         for button in (
             self.split_button,
+            self.smart_split_button,
             self.add_button,
             self.delete_button,
             self.move_up_button,
@@ -99,6 +120,7 @@ class ScenePage(QDialog):
         layout.addLayout(right_layout, 2)
 
         self._refresh_list()
+        self._refresh_smart_split_button()
 
     # ------------------------------------------------------------ 槽函数
 
@@ -122,6 +144,144 @@ class ScenePage(QDialog):
                 return
         except SceneServiceError as exc:
             QMessageBox.warning(self, "拆分失败", str(exc))
+            return
+        self._refresh_list(select_row=0)
+
+    # ------------------------------------------------------------ 智能拆分
+
+    def _refresh_smart_split_button(self) -> None:
+        """按可用性条件刷新智能拆分按钮状态（不满足则置灰并提示原因）。"""
+        if self._smart_split_service is None or self._task_runner is None:
+            self.smart_split_button.setEnabled(False)
+            self.smart_split_button.setToolTip("智能分镜未启用。")
+            return
+        check = self._smart_split_service.availability()
+        self.smart_split_button.setEnabled(check.available)
+        self.smart_split_button.setToolTip(check.reason if not check.available else "")
+
+    def _on_smart_split(self) -> None:
+        if self._smart_split_service is None or self._task_runner is None:
+            return
+        check = self._smart_split_service.availability()
+        if not check.available:
+            QMessageBox.information(self, "智能拆分不可用", check.reason)
+            self._refresh_smart_split_button()
+            return
+        # 隐私确认（与规范化 base_url 绑定；取消则零网络请求）
+        if self._smart_split_service.needs_privacy_confirmation():
+            answer = QMessageBox.question(
+                self,
+                "发送文案确认",
+                PRIVACY_NOTICE,
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Ok:
+                return
+            self._smart_split_service.record_privacy_confirmation()
+        self._start_llm_task()
+
+    def _start_llm_task(self) -> None:
+        assert self._smart_split_service is not None and self._task_runner is not None
+        service = self._smart_split_service
+        script = self._project.original_script
+        self._set_split_buttons_enabled(False)
+        progress = QProgressDialog("正在请求模型拆分…", "取消", 0, 0, self)
+        progress.setWindowTitle("智能拆分")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        self._progress = progress
+        task_id = self._task_runner.run(
+            lambda: service.split_with_llm(script),
+            self._on_smart_success,
+            self._on_smart_error,
+        )
+        self._smart_task_id = task_id
+        progress.canceled.connect(lambda: self._on_smart_cancel(task_id))
+        progress.show()
+
+    def _on_smart_cancel(self, task_id: int) -> None:
+        """取消：使 task_id 失效并立即恢复 UI；晚到结果由 TaskRunner 丢弃。"""
+        if self._task_runner is not None:
+            self._task_runner.cancel(task_id)
+        self._finish_llm_task()
+
+    def _on_smart_success(self, texts: list[str]) -> None:
+        self._finish_llm_task()
+        self._show_preview(texts, show_use_rules=True)
+
+    def _on_smart_error(self, exc: Exception) -> None:
+        self._finish_llm_task()
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("智能拆分失败")
+        box.setText(str(exc))
+        retry_button = box.addButton("重试", QMessageBox.ButtonRole.AcceptRole)
+        rules_button = box.addButton("改用规则拆分", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is retry_button:
+            self._on_smart_split()
+        elif clicked is rules_button:
+            self._run_rules_preview()
+
+    def _finish_llm_task(self) -> None:
+        self._smart_task_id = None
+        if self._progress is not None:
+            self._progress.blockSignals(True)  # 避免 close 触发 canceled
+            self._progress.close()
+            self._progress = None
+        self._set_split_buttons_enabled(True)
+        self._refresh_smart_split_button()
+
+    def _set_split_buttons_enabled(self, enabled: bool) -> None:
+        self.split_button.setEnabled(enabled)
+        self.smart_split_button.setEnabled(enabled)
+
+    def _run_rules_preview(self) -> None:
+        if self._smart_split_service is None:
+            return
+        try:
+            texts = self._smart_split_service.split_with_rules(
+                self._project.original_script
+            )
+        except SmartSplitError as exc:
+            QMessageBox.warning(self, "拆分失败", str(exc))
+            return
+        self._show_preview(texts, show_use_rules=False)
+
+    def _show_preview(self, texts: list[str], show_use_rules: bool) -> None:
+        dialog = ScenePreviewDialog(texts, show_use_rules=show_use_rules, parent=self)
+        dialog.exec()
+        if dialog.choice == PreviewChoice.APPLY:
+            self._apply_confirmed_texts(texts)
+        elif dialog.choice == PreviewChoice.USE_RULES:
+            self._run_rules_preview()
+        # CANCEL：不改动任何数据
+
+    def _apply_confirmed_texts(self, texts: list[str]) -> None:
+        try:
+            self._scene_service.replace_from_texts(self._project, texts)
+        except ScenesExistError as exc:
+            answer = QMessageBox.question(
+                self,
+                "覆盖现有场景？",
+                f"{exc}\n\n是否覆盖？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            try:
+                self._scene_service.replace_from_texts(
+                    self._project, texts, overwrite=True
+                )
+            except SceneServiceError as retry_exc:
+                QMessageBox.warning(self, "无法应用拆分结果", str(retry_exc))
+                return
+        except SceneServiceError as exc:
+            QMessageBox.warning(self, "无法应用拆分结果", str(exc))
             return
         self._refresh_list(select_row=0)
 

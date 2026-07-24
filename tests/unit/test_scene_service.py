@@ -226,6 +226,90 @@ def test_blank_scene_cannot_be_saved(
     assert service.is_dirty  # 保存失败不清除未保存状态
 
 
+# ------------------------------------------------------------ replace_from_texts
+
+def test_replace_from_texts_creates_scenes(
+    manager: ProjectManager, project: Project
+) -> None:
+    service, _ = make_service(manager)
+    scenes = service.replace_from_texts(project, ["确认场景一。", "确认场景二。"])
+    assert [s.scene_id for s in scenes] == [1, 2]
+    assert [s.text for s in scenes] == ["确认场景一。", "确认场景二。"]
+    for scene in scenes:
+        assert scene.search_keywords == []
+        assert scene.selected_asset is None
+        assert scene.audio_path is None
+        assert scene.duration is None
+        assert scene.status == "pending"
+    assert service.is_dirty
+
+
+def test_replace_from_texts_overwrite_protection(
+    manager: ProjectManager, project: Project
+) -> None:
+    service, _ = make_service(manager)
+    service.replace_from_texts(project, ["原有场景。"])
+    with pytest.raises(ScenesExistError):
+        service.replace_from_texts(project, ["新的场景。"])
+    assert [s.text for s in project.scenes] == ["原有场景。"]
+    replaced = service.replace_from_texts(project, ["新的场景。"], overwrite=True)
+    assert [s.text for s in replaced] == ["新的场景。"]
+
+
+@pytest.mark.parametrize(
+    "bad_input",
+    [
+        [],                      # 空列表
+        "不是列表",               # 非列表
+        ["正常。", ""],           # 空字符串项
+        ["正常。", "   "],        # 空白项
+        ["正常。", 123],          # 非 str 项
+        None,                    # None
+    ],
+)
+def test_replace_from_texts_defensive_validation(
+    manager: ProjectManager, project: Project, bad_input
+) -> None:
+    """测试要求 11：非法输入被拒绝，且 Project、scenes、dirty 均无变化。"""
+    service, _ = make_service(manager)
+    service.split_script(project)
+    service.save(project)  # dirty 清零
+    scenes_before = list(project.scenes)
+    with pytest.raises(SceneServiceError):
+        service.replace_from_texts(project, bad_input, overwrite=True)
+    assert project.scenes == scenes_before  # 场景未变
+    assert not service.is_dirty  # dirty 未变
+
+
+def test_replace_from_texts_all_or_nothing(
+    manager: ProjectManager, project: Project
+) -> None:
+    """先完整验证与构建，再一次性替换：失败时不出现半替换状态。"""
+    service, _ = make_service(manager)
+    service.split_script(project)
+    original = list(project.scenes)
+    with pytest.raises(SceneServiceError):
+        service.replace_from_texts(
+            project, ["第一个有效。", "", "第三个有效。"], overwrite=True
+        )
+    assert project.scenes == original
+
+
+def test_existing_public_behavior_unchanged(
+    manager: ProjectManager, project: Project
+) -> None:
+    """既有公开方法行为不变（补充回归锚点）。"""
+    service, _ = make_service(manager)
+    scenes = service.split_script(project)
+    assert len(scenes) == 3
+    service.add_scene(project, "新增")
+    service.move_scene_up(project, 3)
+    service.delete_scene(project, 0)
+    assert [s.scene_id for s in project.scenes] == [1, 2, 3]
+    service.save(project)
+    assert not service.is_dirty
+
+
 def test_save_and_reload_scenes(
     manager: ProjectManager, project: Project, tmp_path: Path
 ) -> None:
