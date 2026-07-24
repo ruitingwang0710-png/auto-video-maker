@@ -132,7 +132,64 @@ def test_scene_page_without_smart_services(
     )
     page = ScenePage(project, scene_service)
     assert not page.smart_split_button.isEnabled()
+    # 未注入图片服务时配图按钮安全禁用
+    assert not page.search_image_button.isEnabled()
+    assert not page.local_image_button.isEnabled()
     page.close()
+
+
+def test_scene_page_asset_status_display(
+    qapp: QApplication,
+    manager: ProjectManager,
+    scene_service: SceneService,
+    tmp_path,
+) -> None:
+    """场景页显示配图状态（未配图 / 已配图 + 作者与许可证）。"""
+    import io
+
+    import httpx
+    from PIL import Image as PILImage
+
+    from auto_video_maker.services.asset_download_service import AssetDownloadService
+
+    project = manager.create_project(
+        "配图状态",
+        "第一段场景文字内容。\n\n第二段场景文字内容。",
+        "9:16",
+        tmp_path / "out",
+    )
+    scene_service.split_script(project)
+    scene_service.save(project)
+    project_root = manager.project_directory(project)
+
+    # 本地导入一张测试图片并写入场景
+    buffer = io.BytesIO()
+    PILImage.new("RGB", (10, 10)).save(buffer, format="PNG")
+    local_file = tmp_path / "pic.png"
+    local_file.write_bytes(buffer.getvalue())
+    downloader = AssetDownloadService(
+        transport=httpx.MockTransport(lambda r: httpx.Response(500))
+    )
+    asset = downloader.import_local_file(local_file, project_root)
+    scene_service.set_scene_asset(project, 0, asset)
+    # 关键：清除 dirty 状态后再关闭页面。
+    # set_scene_asset 会置 dirty；若不保存，page.close() 将触发
+    # closeEvent 的"未保存修改"模态弹窗（产品要求的行为），
+    # 在无人值守的测试中会永久阻塞。
+    scene_service.save(project)
+
+    page = ScenePage(project, scene_service, project_root=project_root)
+    page.scene_list.setCurrentRow(0)
+    assert "已配图" in page.asset_status_label.text()
+    assert "USER-PROVIDED" in page.asset_status_label.text()
+    assert not scene_service.is_dirty  # 确保关闭不会弹出模态对话框
+    page.close()
+
+    # selected_asset=null 的场景显示未配图
+    page_2 = ScenePage(project, scene_service, project_root=project_root)
+    page_2.scene_list.setCurrentRow(1)
+    assert page_2.asset_status_label.text() == "未配图"
+    page_2.close()
 
 
 def test_scene_preview_dialog_constructs(qapp: QApplication) -> None:

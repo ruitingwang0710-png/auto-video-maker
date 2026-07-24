@@ -52,11 +52,14 @@ class Scene:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Scene":
+        # 统一经 SelectedAsset 转换入口（容错）：null 与旧项目必须正常加载
+        from auto_video_maker.models.selected_asset import SelectedAsset
+
         return cls(
             scene_id=int(data["scene_id"]),
             text=str(data["text"]),
             search_keywords=list(data.get("search_keywords") or []),
-            selected_asset=data.get("selected_asset"),
+            selected_asset=SelectedAsset.from_storage(data.get("selected_asset")),
             audio_path=data.get("audio_path"),
             duration=data.get("duration"),
             status=str(data.get("status", "pending")),
