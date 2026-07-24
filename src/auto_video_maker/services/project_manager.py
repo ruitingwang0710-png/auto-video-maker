@@ -143,6 +143,20 @@ class ProjectManager:
             project.output["subtitle_path"] = None
             logger.info("字幕引用已失效")
 
+    def set_video_path(self, project: Project, video_path: str) -> None:
+        """写入 Project.output.video_path（项目级状态，相对路径）。"""
+        self._validate_relative_output_path(project, video_path)
+        project.output["video_path"] = video_path
+        project.output["status"] = "rendered"
+        logger.info("视频引用已写入: %s", video_path)
+
+    def clear_video_path(self, project: Project) -> None:
+        """清空视频引用（派生产物失效矩阵）。"""
+        if project.output.get("video_path"):
+            project.output["video_path"] = None
+            project.output["status"] = "draft"
+            logger.info("视频引用已失效")
+
     def _validate_relative_output_path(self, project: Project, path_str: str) -> None:
         from pathlib import PurePosixPath
 

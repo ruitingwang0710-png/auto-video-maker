@@ -11,12 +11,20 @@
 
 ## 当前状态
 
-Phase 4 已完成：语音和字幕。
+Phase 5 已完成：视频生成。
 
-- Phase 1（项目系统）、Phase 2（文案拆分）、Phase 2.5（LLM 智能分镜，
-  含真实 Groq 验收）、Phase 3（图片素材系统）：已完成并通过 macOS 本机验收
-- Phase 4：implementation complete and automated tests passed;
-  live edge-tts synthesis test deferred to macOS acceptance
+- Phase 1–4：已完成并通过 macOS 本机验收（含真实 Groq 与 edge-tts）
+- Phase 5：implementation complete; automated tests passed including
+  real-FFmpeg render in sandbox; macOS export acceptance pending
+
+## 视频导出使用说明
+
+1. 安装 FFmpeg（macOS：`brew install ffmpeg`）
+2. 项目中每个场景需已有图片与配音；点击场景页「导出视频」
+3. 导出到项目 `output/`：final_video.mp4（H.264+AAC、字幕烧录、
+   图片不拉伸 + 模糊背景 + 轻微缩放动效）、subtitles.srt、credits.txt
+4. 导出中可取消；失败或取消不会破坏上一次成功导出
+5. 未变更的场景片段有缓存，重复导出明显加速
 
 已实现：
 
@@ -41,10 +49,13 @@ Phase 4 已完成：语音和字幕。
   逐场景或批量生成中文配音（edge-tts，内容寻址缓存、mp3 实测时长）；
   基于时长生成同步 SRT 字幕（长场景自动拆多条、每行 ≤16 字）；
   失效保护——修改文字后旧配音失效、场景变动后旧字幕失效
+- 视频生成：FFmpeg 能力预检、逐场景片段（单次编码含字幕烧录、
+  内容寻址缓存）、concat 无损合并、staging 事务式导出、
+  真实进度与取消、credits.txt 版权清单
 - 基础日志
 - 单元测试与集成测试
 
-尚未实现（后续阶段）：FFmpeg 视频生成、字幕烧录、credits.txt 导出、打包。
+尚未实现（后续阶段）：安装包与 FFmpeg/字体捆绑（Phase 6）。
 
 ## 配音与字幕使用说明
 

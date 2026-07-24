@@ -22,6 +22,7 @@ from auto_video_maker.infrastructure.secret_store import (
 )
 from auto_video_maker.infrastructure.task_runner import TaskRunner
 from auto_video_maker.infrastructure.audio_probe import AudioProbe
+from auto_video_maker.infrastructure.ffmpeg_runner import FFmpegRunner
 from auto_video_maker.providers.image_provider import OpenverseImageProvider
 from auto_video_maker.providers.llm_client import LLMClient, OpenAICompatibleClient
 from auto_video_maker.providers.llm_scene_splitter import LLMSceneSplitter
@@ -30,7 +31,9 @@ from auto_video_maker.services.asset_download_service import AssetDownloadServic
 from auto_video_maker.services.audio_service import AudioService
 from auto_video_maker.services.keyword_service import KeywordService
 from auto_video_maker.services.project_manager import ProjectManager
+from auto_video_maker.services.credits_service import CreditsService
 from auto_video_maker.services.subtitle_service import SubtitleService
+from auto_video_maker.services.video_render_service import VideoRenderService
 from auto_video_maker.services.scene_service import SceneService
 from auto_video_maker.services.scene_splitter import RuleBasedSceneSplitter, SceneSplitter
 from auto_video_maker.services.smart_split_service import SmartSplitService
@@ -99,6 +102,13 @@ def main() -> int:
     )
     subtitle_service = SubtitleService()
 
+    ffmpeg_runner = FFmpegRunner(config_store=config_store)
+    credits_service = CreditsService()
+    render_service = VideoRenderService(
+        ffmpeg_runner, subtitle_service, credits_service,
+        project_manager, scene_service,
+    )
+
     window = MainWindow(
         project_manager,
         scene_service,
@@ -111,6 +121,7 @@ def main() -> int:
         keyword_service=keyword_service,
         audio_service=audio_service,
         subtitle_service=subtitle_service,
+        render_service=render_service,
     )
     window.show()
     exit_code = app.exec()

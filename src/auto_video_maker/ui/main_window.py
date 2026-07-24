@@ -27,6 +27,7 @@ from auto_video_maker.services.asset_download_service import AssetDownloadServic
 from auto_video_maker.services.audio_service import AudioService
 from auto_video_maker.services.keyword_service import KeywordService
 from auto_video_maker.services.subtitle_service import SubtitleService
+from auto_video_maker.services.video_render_service import VideoRenderService
 from auto_video_maker.services.project_manager import (
     PROJECT_FILE_NAME,
     ProjectManager,
@@ -62,8 +63,10 @@ class MainWindow(QMainWindow):
         keyword_service: KeywordService | None = None,
         audio_service: AudioService | None = None,
         subtitle_service: SubtitleService | None = None,
+        render_service: VideoRenderService | None = None,
     ) -> None:
         super().__init__()
+        self._render_service = render_service
         self._project_manager = project_manager
         self._scene_service = scene_service
         self._smart_split_service = smart_split_service
@@ -152,6 +155,7 @@ class MainWindow(QMainWindow):
             project_root=self._project_manager.project_directory(project),
             audio_service=self._audio_service,
             subtitle_service=self._subtitle_service,
+            render_service=self._render_service,
             parent=self,
         )
         page.exec()
