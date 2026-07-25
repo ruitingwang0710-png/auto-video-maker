@@ -43,7 +43,7 @@ def test_scenes_object_success() -> None:
     # 提示词包含原文、长度软目标与 scenes 协议说明
     assert SCRIPT in client.prompts[0]
     assert "15" in client.prompts[0] and "60" in client.prompts[0]
-    assert '"scenes"' in client.prompts[0]
+    assert '"split_after"' in client.prompts[0]
 
 
 def test_strict_response_format_passed_to_client() -> None:
@@ -56,9 +56,9 @@ def test_strict_response_format_passed_to_client() -> None:
     assert SCENE_SPLIT_RESPONSE_FORMAT["type"] == "json_schema"
     assert schema["name"] == "scene_split_result"
     assert schema["strict"] is True
-    assert schema["schema"]["required"] == ["scenes"]
+    assert schema["schema"]["required"] == ["split_after"]
     assert schema["schema"]["additionalProperties"] is False
-    assert schema["schema"]["properties"]["scenes"]["items"] == {"type": "string"}
+    assert schema["schema"]["properties"]["split_after"]["items"] == {"type": "integer", "minimum": 0}
 
 
 def test_scenes_object_in_code_block() -> None:
@@ -169,6 +169,45 @@ def test_implements_scene_splitter_interface() -> None:
     result = splitter.split(SCRIPT)
     assert isinstance(result, list)
     assert all(isinstance(item, str) for item in result)
+
+
+def test_split_after_protocol_reconstructs_original_text() -> None:
+    splitter, client = make_splitter(
+        json.dumps({"split_after": [0, 1]}, ensure_ascii=False)
+    )
+
+    assert splitter.split(SCRIPT) == VALID_SPLIT
+    assert '"split_after"' in client.prompts[0]
+
+
+def test_split_after_accepts_object_items() -> None:
+    response = {
+        "split_after": [
+            {"index": 0},
+            {"end": 1},
+        ]
+    }
+    splitter, _ = make_splitter(
+        json.dumps(response, ensure_ascii=False)
+    )
+
+    assert splitter.split(SCRIPT) == VALID_SPLIT
+
+
+def test_split_after_final_index_is_optional() -> None:
+    splitter, _ = make_splitter(
+        json.dumps({"split_after": [0, 1, 2]}, ensure_ascii=False)
+    )
+
+    assert splitter.split(SCRIPT) == VALID_SPLIT
+
+
+def test_empty_split_after_returns_one_exact_scene() -> None:
+    splitter, _ = make_splitter(
+        json.dumps({"split_after": []}, ensure_ascii=False)
+    )
+
+    assert splitter.split(SCRIPT) == [SCRIPT]
 
 
 class TestParseResponse:

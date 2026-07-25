@@ -154,8 +154,8 @@ def test_invalid_scenes_structure_leaves_project_untouched(tmp_path: Path) -> No
     assert (tmp_path / "out" / "结构失败" / "project.json").read_text("utf-8") == saved
 
 
-def test_new_scenes_object_protocol_end_to_end(tmp_path: Path) -> None:
-    """新协议 {"scenes": [...]} 的完整链路。"""
+def test_new_split_after_protocol_end_to_end(tmp_path: Path) -> None:
+    """新协议 {"split_after": [...]} 的完整链路。"""
     config_store = ConfigStore(tmp_path / "config.json")
     secret_store = FakeSecretStore()
     config_store.save(LLMSettings(enabled=True, base_url=BASE_URL, model="m"))
@@ -164,7 +164,7 @@ def test_new_scenes_object_protocol_end_to_end(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         assert body["response_format"]["type"] == "json_schema"  # strict 优先
-        content = json.dumps({"scenes": LLM_SPLIT}, ensure_ascii=False)
+        content = json.dumps({"split_after": [0, 1]}, ensure_ascii=False)
         return httpx.Response(
             200, json={"choices": [{"message": {"content": content}}]}
         )
