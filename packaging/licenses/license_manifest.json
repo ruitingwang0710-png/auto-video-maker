@@ -1,0 +1,21 @@
+{
+  "_comment": "经审计的 vendored 官方许可证副本清单（fail closed：占位/缺失/SHA 不符即失败）。两份正文由用户在构建前从 GNU 官方来源手工下载，构建脚本绝不联网。填写方法见 README/packaging 说明。",
+  "licenses": [
+    {
+      "file": "LGPL-3.0.txt",
+      "license_id": "LGPL-3.0-only",
+      "source_url": "https://www.gnu.org/licenses/lgpl-3.0.txt",
+      "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118",
+      "retrieved": "2026-07-25",
+      "provenance": "downloaded manually from gnu.org by Bonnie Wang"
+    },
+    {
+      "file": "GPL-3.0.txt",
+      "license_id": "GPL-3.0-only",
+      "source_url": "https://www.gnu.org/licenses/gpl-3.0.txt",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "retrieved": "2026-07-25",
+      "provenance": "downloaded manually from gnu.org by Bonnie Wang"
+    }
+  ]
+}

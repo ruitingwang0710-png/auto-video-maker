@@ -104,6 +104,13 @@ def test_save_writes_config_without_key(qapp, config_store, secret_store) -> Non
     assert config_store.load().model == "new-model"
 
 
+def test_open_logs_button_exists(qapp, config_store, secret_store) -> None:
+    """Phase 6：设置页提供「打开日志文件夹」按钮。"""
+    dialog = make_dialog(config_store, secret_store)
+    assert dialog.open_logs_button.text() == "打开日志文件夹"
+    assert dialog.open_logs_button.isEnabled()
+
+
 def test_status_follows_base_url_field(qapp, config_store, secret_store) -> None:
     """状态针对当前输入的 base_url 对应的 Key。"""
     secret_store.set(secret_id_for_base_url(BASE_URL), "key")

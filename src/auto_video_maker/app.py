@@ -14,13 +14,17 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from auto_video_maker.infrastructure.config import ConfigStore, LLMSettings
-from auto_video_maker.infrastructure.logging_config import setup_logging
+from auto_video_maker.infrastructure.logging_config import (
+    default_log_path,
+    setup_logging,
+)
 from auto_video_maker.infrastructure.secret_store import (
     InMemorySecretStore,
     MacOSKeychainSecretStore,
     SecretStore,
 )
 from auto_video_maker.infrastructure.task_runner import TaskRunner
+from auto_video_maker.infrastructure import resource_locator
 from auto_video_maker.infrastructure.audio_probe import AudioProbe
 from auto_video_maker.infrastructure.ffmpeg_runner import FFmpegRunner
 from auto_video_maker.providers.image_provider import OpenverseImageProvider
@@ -58,8 +62,8 @@ def main() -> int:
 
     本函数是唯一的 composition root：所有服务与拆分器在此创建并注入。
     """
-    setup_logging()
-    logger.info("应用启动: %s", APP_NAME)
+    setup_logging(log_file=default_log_path())
+    logger.info("应用启动: %s（frozen=%s）", APP_NAME, resource_locator.is_frozen())
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
 
@@ -102,7 +106,11 @@ def main() -> int:
     )
     subtitle_service = SubtitleService()
 
-    ffmpeg_runner = FFmpegRunner(config_store=config_store)
+    # frozen 时优先使用应用内 Contents/MacOS/bin 的捆绑 FFmpeg
+    ffmpeg_runner = FFmpegRunner(
+        config_store=config_store,
+        app_bin_dir=resource_locator.bundled_bin_dir(),
+    )
     credits_service = CreditsService()
     render_service = VideoRenderService(
         ffmpeg_runner, subtitle_service, credits_service,
@@ -124,6 +132,25 @@ def main() -> int:
         render_service=render_service,
     )
     window.show()
+
+    # 首次启动检查：QApplication 创建后、进入事件循环时执行；
+    # 只提示一次，不阻止进入首页（约束 D）
+    def _run_startup_checks() -> None:
+        from PySide6.QtWidgets import QMessageBox
+
+        from auto_video_maker.services.startup_checks import run_startup_checks
+
+        issues = run_startup_checks(ffmpeg_runner, config_store)
+        if issues:
+            QMessageBox.information(
+                window,
+                "启动检查提示",
+                "\n\n".join(issue.message for issue in issues),
+            )
+
+    from PySide6.QtCore import QTimer
+
+    QTimer.singleShot(0, _run_startup_checks)
     exit_code = app.exec()
     logger.info("应用退出，退出码 %s", exit_code)
     return exit_code

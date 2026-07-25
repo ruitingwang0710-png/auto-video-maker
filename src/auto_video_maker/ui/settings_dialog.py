@@ -76,6 +76,9 @@ class SettingsDialog(QDialog):
         key_status_row.addStretch(1)
         key_status_row.addWidget(self.delete_key_button)
 
+        self.open_logs_button = QPushButton("打开日志文件夹", self)
+        self.open_logs_button.clicked.connect(self._on_open_logs)
+
         form = QFormLayout(self)
         form.addRow(self.enabled_checkbox)
         form.addRow("Base URL", self.base_url_edit)
@@ -91,9 +94,20 @@ class SettingsDialog(QDialog):
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
+        form.addRow(self.open_logs_button)
         form.addRow(buttons)
 
         self._refresh_key_status()
+
+    def _on_open_logs(self) -> None:
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        from auto_video_maker.infrastructure.logging_config import default_log_dir
+
+        log_dir = default_log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir)))
 
     # ------------------------------------------------------------ 槽函数
 
