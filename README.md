@@ -11,11 +11,26 @@
 
 ## 当前状态
 
-Phase 5 已完成：视频生成。
+Phase 6 进行中：macOS 打包与发布。
 
-- Phase 1–4：已完成并通过 macOS 本机验收（含真实 Groq 与 edge-tts）
-- Phase 5：implementation complete; automated tests passed including
-  real-FFmpeg render in sandbox; macOS export acceptance pending
+- Phase 1–5：已完成并通过 macOS 本机真实验收（完整 MVP 链路可用）
+- Phase 6：packaging assets and automated tests complete;
+  real macOS build and clean-machine acceptance pending
+
+## macOS 打包（Phase 6）
+
+构建机要求：Apple Silicon Mac、Python 3.12 arm64、
+`pip install -r packaging/requirements-build.txt`。
+
+1. 手工下载 FFmpeg 8.1.2 正式 release（Martin Riedl Build Server，
+   arm64 的 ffmpeg 与 ffprobe）放入 `packaging/vendor/`，
+   并把实测 SHA-256 / URL / configure 填入
+   `packaging/ffmpeg_manifest.json`（占位值会使构建直接失败）
+2. `python3 packaging/make_icon.py` 生成临时图标
+3. `./packaging/build_app.sh --internal-only`
+   （FFmpeg 对应源码材料归档前只允许内部测试构建）
+4. `./packaging/make_dmg.sh`
+产物在 `dist/`；构建失败不会破坏上一次成功产物与 Git 工作区。
 
 ## 视频导出使用说明
 

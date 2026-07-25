@@ -1,0 +1,25 @@
+{
+  "_comment": "FFmpeg vendor 清单（fail closed）。sha256 为解压后 packaging/vendor/ 内二进制文件的 SHA-256（非 ZIP）；ZIP 校验值可经 provider_zip_sha256_url 在 Mac 上核对。",
+  "provider": "Martin Riedl Build Server",
+  "release_channel": "release",
+  "version": "8.1.2",
+  "architecture": "arm64",
+  "license": "GPL-2.0-or-later (build includes libx264/libx265; --enable-gpl --enable-version3)",
+  "configure": "--prefix=/Volumes/ffmpeg_arm64/out --pkg-config-flags=--static --extra-version='https://www.martin-riedl.de' --enable-gray --enable-libxml2 --enable-version3 --enable-gpl --enable-openssl --enable-libfreetype --enable-fontconfig --enable-libharfbuzz --enable-libsnappy --enable-libsrt --enable-libvmaf --enable-libass --enable-libklvanc --enable-libzimg --enable-libzvbi --enable-libaom --enable-libdav1d --enable-libopenh264 --enable-libopenjpeg --enable-librav1e --enable-libsvtav1 --enable-libvpx --enable-libvvenc --enable-libwebp --enable-libx264 --enable-libx265 --enable-libmp3lame --enable-libopus --enable-libvorbis --enable-libtheora",
+  "build_id": "1783011502_8.1.2",
+  "build_created": "2026-07-02 18:58 CEST",
+  "ffmpeg": {
+    "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1783011502_8.1.2/ffmpeg.zip",
+    "sha256": "eaf91238e104dd0e262bc6510e25061855cc99a6955a721b0ac99660d58c473d",
+    "provider_zip_sha256_url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1783011502_8.1.2/ffmpeg.zip.sha256"
+  },
+  "ffprobe": {
+    "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1783011502_8.1.2/ffprobe.zip",
+    "sha256": "ed9dc5871914b466b96b402c9ec0ba68ce4f836e72faa464b1b4e279835bd4a6",
+    "provider_zip_sha256_url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1783011502_8.1.2/ffprobe.zip.sha256"
+  },
+  "source_correspondence": {
+    "archived": false,
+    "note": "构建脚本开源于 https://git.martin-riedl.de/ffmpeg/build-script；与本二进制精确对应的 FFmpeg/x264/libass 源码尚未归档——归档完成前仅允许 --internal-only 构建，不得公开 Release"
+  }
+}

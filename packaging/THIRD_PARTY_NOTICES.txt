@@ -1,0 +1,60 @@
+Auto Video Maker — Third-Party Notices
+======================================
+
+本应用自有代码采用 MIT License（见随附 LICENSE，
+Copyright (c) 2026 Bonnie Wang）。MIT 许可只覆盖自有代码，
+不改变以下第三方组件各自的许可证。本文件不构成法律意见；
+商业或大规模公开分发前应进行独立的许可证审查。
+
+--------------------------------------------------------------------
+1. FFmpeg / ffprobe（捆绑二进制）
+--------------------------------------------------------------------
+- 版本：8.1.2（正式 release）
+- 架构：macOS arm64
+- 来源：Martin Riedl Build Server（构建配置见 packaging/ffmpeg_manifest.json）
+- 许可证：GPL v2 或更高（本构建包含 libx264，适用 GPL 条款）
+- 二进制 SHA-256：见 packaging/ffmpeg_manifest.json
+- 源码对应性（GPL 合规）：
+  分发本应用副本时，必须能够提供与上述二进制精确对应的
+  FFmpeg、x264、libass 等源码、构建配置与补丁。
+  获取/归档位置：<发布前填写；未归档版本仅限内部测试，不得公开分发>
+- FFmpeg 官方源码：https://ffmpeg.org/download.html
+- 本应用通过独立子进程调用 ffmpeg/ffprobe；
+  对 GPL 边界不在此作最终法律结论。
+
+--------------------------------------------------------------------
+2. Qt / PySide6（LGPLv3）
+--------------------------------------------------------------------
+- 实际打包模块：QtCore、QtGui、QtWidgets 及所需 platform/style/
+  imageformats 插件（GPL-only 模块如 QtCharts、QtDataVisualization
+  已排除，未使用模块已排除，清单见 packaging/autovideomaker.spec）
+- 许可证：LGPL v3（全文见本应用内
+  Contents/Resources/licenses/LGPL-3.0.txt）
+- Qt Frameworks 在应用包内保持独立框架形态（Contents/Frameworks/），
+  未静态合并、未混淆。用户可在 LGPLv3 许可范围内替换或调试这些库：
+  以兼容版本的同名 Framework 替换 Contents/Frameworks/ 下对应目录即可。
+- 源码获取：https://download.qt.io/official_releases/ 与
+  https://code.qt.io/cgit/pyside/pyside-setup.git/
+  （版本与打包时安装的 PySide6 版本对应，见构建日志 pip freeze）
+
+--------------------------------------------------------------------
+3. Python 依赖
+--------------------------------------------------------------------
+- httpx — BSD-3-Clause
+- Pillow — MIT-CMU（HPND）
+- edge-tts — GPL-3.0（经独立 Python 包引用；见其仓库
+  https://github.com/rany2/edge-tts）
+- mutagen — GPL-2.0-or-later
+- aiohttp — Apache-2.0
+- certifi — MPL-2.0
+（具体版本见构建日志 pip freeze。）
+
+--------------------------------------------------------------------
+4. 在线服务说明
+--------------------------------------------------------------------
+- 智能分镜 / AI 关键词：文案发送至用户自行配置的 OpenAI 兼容
+  LLM 服务（用户自备 API Key，Key 仅存 macOS 钥匙串）。
+- 配音：文案发送至微软在线语音服务（经 edge-tts）。
+- 图片搜索：查询发送至 Openverse API；图片素材遵循各自
+  CC0/PDM/CC-BY 许可，逐项记录于导出的 credits.txt。
+以上服务仅在用户明确操作并（首次）确认隐私提示后调用。
