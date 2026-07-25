@@ -110,28 +110,72 @@ class KeywordService:
         return keywords
 
     @staticmethod
-    def _parse_keyword_items(raw: str) -> list:
-        """解析关键词响应：只接受顶层 JSON 数组（可带 ```json 代码块）。
+    def _parse_keyword_items(raw: str) -> list[str]:
+        """解析不同 OpenAI-compatible Provider 返回的关键词结构。"""
+        text = strip_code_fence(raw).strip()
 
-        关键词契约与分镜契约不同：数组中的空白项、重复项、非文本项
-        由 normalize_keywords 过滤，而不是整体拒绝
-        （分镜的 parse_response 保持严格，不在此复用）。
-        """
-        text = strip_code_fence(raw)
         try:
             data = json.loads(text)
         except json.JSONDecodeError as exc:
+            logger.warning(
+                "关键词响应不是有效 JSON：%s；原始响应=%r",
+                exc,
+                raw,
+            )
             raise KeywordServiceError(
                 "模型返回的关键词格式无效。你可以重试，或手动填写关键词。"
             ) from exc
+
+        # 兼容 {"keywords": [...]}
+        # 以及部分 Provider 使用的其他包装字段。
+        if isinstance(data, dict):
+            for key in ("keywords", "items", "search_terms", "queries"):
+                value = data.get(key)
+                if isinstance(value, list):
+                    data = value
+                    break
+            else:
+                logger.warning(
+                    "关键词对象没有可识别的数组字段：keys=%s",
+                    list(data.keys()),
+                )
+                raise KeywordServiceError(
+                    "模型返回的关键词格式无效。你可以重试，或手动填写关键词。"
+                )
+
         if not isinstance(data, list):
             logger.warning(
-                "关键词响应结构不符合要求：顶层类型=%s", type(data).__name__
+                "关键词顶层结构不是数组：type=%s；data=%r",
+                type(data).__name__,
+                data,
             )
             raise KeywordServiceError(
                 "模型返回的关键词格式无效。你可以重试，或手动填写关键词。"
             )
-        return data
+
+        items: list[str] = []
+
+        for item in data:
+            # 标准格式：["keyword one", "keyword two"]
+            if isinstance(item, str):
+                items.append(item)
+                continue
+
+            # 兼容 [{"keyword": "keyword one"}]
+            if isinstance(item, dict):
+                for key in ("keyword", "query", "text", "term"):
+                    value = item.get(key)
+                    if isinstance(value, str) and value.strip():
+                        items.append(value)
+                        break
+
+        if not items:
+            logger.warning("关键词数组中没有可用文本项：data=%r", data)
+            raise KeywordServiceError(
+                "模型返回的关键词格式无效。你可以重试，或手动填写关键词。"
+            )
+
+        return items
 
     def generate_fallback(self, scene_text: str) -> list[str]:
         """规则兜底：清理空白并生成简短搜索文本（非完整原文）。"""
